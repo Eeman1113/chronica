@@ -284,7 +284,7 @@ bd(B.SWAMP,'Marsh',     ['"','~','τ'],['#5f7a5e','#657f5e','#6d7a52','#647079']
 bd(B.LAKE ,'Lake',      ['~','≈','~'],['#7fa3bd','#7fa3bd','#7aa0ba','#a9c4d4'],'#16222b',-1,'#2a4356');
 const RIVER_FG=['#7fa3bd','#7fa3bd','#7aa0ba','#9fc0d4'], RIVER_BG='#16222b';
 
-const BUILD={NONE:0,HOUSE:1,FARM:2,MARKET:3,TEMPLE:4,KEEP:5,WALL:6,STORE:7,FENCE:8,GRAVE:9};
+const BUILD={NONE:0,HOUSE:1,FARM:2,MARKET:3,TEMPLE:4,KEEP:5,WALL:6,STORE:7,FENCE:8,GRAVE:9,GATE:10};
 const BUILD_DEF=[null,
  {g:'⌂',fg:'#c2b6a3',name:'House'},
  {g:'≡',fg:null,name:'Field'},          // fg seasonal
@@ -294,7 +294,8 @@ const BUILD_DEF=[null,
  {g:'#',fg:'#a49a89',name:'Wall'},
  {g:'⊟',fg:'#b59a6a',name:'Storehouse'},
  {g:'π',fg:'#a08d5f',name:'Fence'},
- {g:'+',fg:'#9b948a',name:'Grave'}];
+ {g:'+',fg:'#9b948a',name:'Grave'},
+ {g:'Π',fg:'#b0995f',name:'Gate'}];
 const FARM_FG=['#87a04b','#b5a94f','#c29a45','#6b6f75'];
 const FARM_G=['=','≡','≡','∙'];               // plowed, growing, harvest, stubble
 const CANAL_FG='#79a89b';
@@ -460,6 +461,7 @@ const idx=(x,y)=>y*world.W+x;
 const inb=(x,y)=>x>=0&&y>=0&&x<world.W&&y<world.H;
 const isWater=b=>b===B.DEEP||b===B.OCEAN||b===B.LAKE;
 const passCost=i=>{
+  if(world.cut&&world.cut[i]===6)return 0.6; // a bored tunnel: cut stone is a road through the mountain
   const b=world.biome[i];
   const def=BIOME_DEF[b];
   if(def.cost<0)return -1;
@@ -972,7 +974,7 @@ function recomputeTerritory(){
 function newSim(){
   sim={day:0,nextId:1,people:new Map(),souls:new Map(),animals:[],armies:[],caravans:[],migrants:[],
     settlements:[],factions:[],religions:[],relations:{},events:[],evSeq:1,evMap:new Map(),fires:{},
-    ships:[],relics:[],eras:[],books:[],snaps:[],beast:null,corpses:[],mon:{},currencies:[],
+    ships:[],relics:[],eras:[],books:[],snaps:[],beast:null,corpses:[],mon:{},currencies:[],tunnels:[],
     yb:0,yd:0,yfever:0,lastYB:0,lastYD:0,
     weather:{type:'clear',t:0},drought:false,
     stats:{yr:[],pop:[],wild:[],setts:[],fac:{}},
@@ -3516,6 +3518,10 @@ function updatePeople(){
       if(sim.day%90===7&&!sim.ships.some(s2=>s2.id===p.sea&&!s2.dead))p.sea=0; // a ghost berth is no berth
       else continue;
     }
+    if(p.tun){ // at the tunnel camp: the pick rules the day
+      if(sim.day%90===8&&!(sim.tunnels||[]).some(t2=>t2.id===p.tun&&t2.state==='digging'))p.tun=0;
+      else continue;
+    }
     // profession transitions
     if(p.prof==='child'&&ageY>=16){p.prof='laborer';bio(p,'Came of age');
       if(typeof inheritMemories==='function')inheritMemories(p)} // the old wounds are told to the young
@@ -3575,7 +3581,7 @@ function maybeBuildPen(st){
     for(let dy=0;dy<4;dy++)for(let dx=0;dx<5;dx++){
       const x=x0+dx,y=y0+dy;
       if(dx>0&&dx<4&&dy>0&&dy<3)continue;
-      if(x===gxx&&y===gyy)continue;
+      if(x===gxx&&y===gyy){world.building[idx(x,y)]=BUILD.GATE;continue} // a real gate, opened for the herd
       world.building[idx(x,y)]=BUILD.FENCE;
     }
     st.stock.wood-=18;
@@ -3640,6 +3646,128 @@ function graveyardYearly(){
     while(gy.tiles.length>1&&gy.graves.length<=(gy.tiles.length-1)*12){
       const ti=gy.tiles.pop();
       if(world.building[ti]===BUILD.GRAVE){world.building[ti]=BUILD.NONE;terrainDirty=true}
+    }
+  }
+}
+/* ---- tunnels: when the mountains tax a real trade route hard enough, men go through them ----
+   No die proposes a tunnel. Measured detours propose it, a treasury and stacked logs fund it,
+   real laborers dig it eating real grain, tools set the pace, and the bore advances tile by
+   tile where anyone can watch it. Abandoned digs stay in the rock forever. */
+function tunnelQuarterly(){
+  if(!sim.tunnels)sim.tunnels=[];
+  for(const f of sim.factions){
+    if(f.dead)continue;
+    if(typeof facKnows==='function'&&!facKnows(f,'masonry'))continue; // no one who can shore a roof, no tunnel
+    if((f.treasury||0)<120)continue;
+    if(sim.tunnels.some(t=>t.fac===f.id&&t.state==='digging'))continue;
+    // find one trade pair this realm keeps paying a mountain detour on
+    let done=false;
+    for(const st of sim.settlements){
+      if(done)break;
+      if(st.razed||st.fac!==f.id||!st.market||!st.trade)continue;
+      if(st.stock.wood<20)continue;
+      for(const pk in st.trade.partners){
+        const other=sim.settlements[+pk];
+        if(!other||other.razed)continue;
+        const straight=Math.max(Math.abs(other.x-st.x),Math.abs(other.y-st.y));
+        if(straight<8||straight>70)continue;
+        // count mountain rock on the straight line
+        let mts=0;const lineAll=[];
+        {
+          let x=st.x,y=st.y;
+          const dx=Math.abs(other.x-x),dy=Math.abs(other.y-y),sx=x<other.x?1:-1,sy=y<other.y?1:-1;
+          let err=dx-dy;
+          while(!(x===other.x&&y===other.y)&&lineAll.length<160){
+            const e2=2*err;
+            if(e2>-dy){err-=dy;x+=sx}
+            if(e2<dx){err+=dx;y+=sy}
+            lineAll.push(idx(x,y));
+            const b2=world.biome[idx(x,y)];
+            if(b2===B.MOUNT||b2===B.PEAK)mts++;
+          }
+        }
+        if(mts<3)continue;
+        const path=findPath(st.x,st.y,other.x,other.y,4000);
+        const ratio=path?path.length/straight:99;
+        if(path&&ratio<2.0)continue; // the road around is bearable
+        // the bore: the first unbroken run of rock along the line
+        let run=[],best2=null;
+        for(const i of lineAll){
+          const b2=world.biome[i];
+          if((b2===B.MOUNT||b2===B.PEAK)&&world.cut[i]!==6)run.push(i);
+          else{if(run.length>=3&&(!best2||run.length<best2.length))best2=run.slice();run=[]}
+        }
+        if(run.length>=3&&(!best2||run.length<best2.length))best2=run.slice();
+        if(!best2||best2.length>14)continue; // too long a dig for this age
+        // the mouth must open onto walkable ground on both ends
+        const m0=best2[0],m1=best2[best2.length-1];
+        const mouthOk=i2=>{const x2=i2%world.W,y2=(i2/world.W)|0;
+          for(let k=0;k<8;k++){const qx=x2+DX8[k],qy=y2+DY8[k];if(inb(qx,qy)&&passable(idx(qx,qy)))return true}return false};
+        if(!mouthOk(m0)||!mouthOk(m1))continue;
+        // recruit the digging crew from the sponsor town
+        const crew=[];
+        for(const p of sim.people.values()){
+          if(crew.length>=4)break;
+          if(p.home!==st.id||p.inArmy||p.sea||p.tun||p.dead)continue;
+          if((sim.day-p.born)<16*DAYS_Y||p.prof==='leader')continue;
+          if(p.prof==='laborer'||p.prof==='miner'||p.prof==='woodcutter')crew.push(p.id);
+        }
+        if(crew.length<3)continue;
+        const t={id:sim.nextId++,fac:f.id,sponsor:st.id,to:other.id,line:best2,prog:0,need:best2.length*10,
+          camp:{x:m0%world.W,y:(m0/world.W)|0},workers:crew,state:'digging',began:sim.day};
+        sim.tunnels.push(t);
+        f.treasury-=60;st.stock.wood-=20;
+        for(const pid of crew){const p=sim.people.get(pid);if(p){p.tun=t.id;p.path=null;p.mission=null;p.x=t.camp.x;p.y=t.camp.y;p.rx=p.x;p.ry=p.y;bio(p,'Went to dig the tunnel under the mountains for '+st.nm)}}
+        logEvent('tech','The '+facTitle(f)+' breaks ground on a tunnel under the mountains, to spare the '+st.nm+' road its long way around.',
+          t.camp.x,t.camp.y,{sett:st.id,fac:f.id},
+          {why:{roadAround:path?path.length:-1,straight:straight,rockTiles:mts,boreLength:best2.length,treasurySpent:60,logsSpent:20}});
+        toast('⛏ A tunnel is begun under the mountains near '+st.nm+'.',t.camp.x,t.camp.y);
+        done=true;break;
+      }
+    }
+  }
+}
+function tunnelMonthly(){
+  if(!sim.tunnels||!sim.tunnels.length)return;
+  for(const t of sim.tunnels){
+    if(t.state!=='digging')continue;
+    const st=sim.settlements[t.sponsor];
+    const f=sim.factions[t.fac];
+    t.workers=t.workers.filter(pid=>{const p=sim.people.get(pid);return p&&!p.dead});
+    const quit=why2=>{
+      for(const pid of t.workers){const p=sim.people.get(pid);if(p){p.tun=0;if(st&&!st.razed){p.x=st.x;p.y=st.y;p.rx=st.x;p.ry=st.y}}}
+      t.state='abandoned';
+      logEvent('misc','The tunnel works near '+(st?st.nm:'the mountains')+' fall silent; the bore stands half-dug in the rock.',t.camp.x,t.camp.y,{fac:t.fac},{cause:why2});
+    };
+    if(!st||st.razed||!f||f.dead){quit('the town that fed the diggers is gone');continue}
+    if(t.workers.length<2){quit('too few hands left to hold a pick');continue}
+    // the camp eats from the sponsor's granary
+    const need=t.workers.length*18;
+    if(!st.inv||foodTotal(st)<need+120){quit('the granary could no longer spare the camp its bread');continue}
+    st.inv[GX.grain]=Math.max(0,st.inv[GX.grain]-need);
+    // tools set the pace of the digging
+    let pace=1;
+    if(st.inv[GX.tools]>=1){st.inv[GX.tools]-=0.5;pace=3}
+    t.prog+=t.workers.length*pace;
+    // the bore advances where anyone can watch it
+    const dug=Math.min(t.line.length,Math.floor(t.prog/10));
+    for(let i2=0;i2<dug;i2++)if(world.cut[t.line[i2]]!==6){world.cut[t.line[i2]]=6;terrainDirty=true}
+    // the mountain does not always consent
+    let deep=false;for(const i2 of t.line)if(world.elev[i2]>0.66){deep=true;break}
+    if(deep&&chance(0.02)&&t.workers.length){
+      const pid=t.workers[ri(0,t.workers.length-1)];
+      const p=sim.people.get(pid);
+      if(p){killPerson(p,'crushed when the tunnel roof came down under the mountain');
+        logEvent('calamity','The roof of the tunnel works near '+st.nm+' has come down; '+fullName(p)+' is dead in the rock.',t.camp.x,t.camp.y,{p:pid,sett:st.id},{cause:'digging under the high peaks'})}
+    }
+    if(t.prog>=t.need){
+      for(const i2 of t.line){world.cut[i2]=6;world.road[i2]=ROAD_T;terrainDirty=true}
+      for(const pid of t.workers){const p=sim.people.get(pid);if(p){p.tun=0;p.x=st.x;p.y=st.y;p.rx=st.x;p.ry=st.y;addDist(p,2,'Dug the tunnel under the mountains')}}
+      t.state='done';
+      const yrs=Math.max(1,Math.round((sim.day-t.began)/DAYS_Y));
+      logEvent('tech','The tunnel under the mountains is open: '+st.nm+' and '+(sim.settlements[t.to]?sim.settlements[t.to].nm:'the far valley')+' are joined through the rock, '+yrs+' year'+(yrs>1?'s':'')+' in the digging.',
+        t.camp.x,t.camp.y,{sett:t.sponsor,fac:t.fac},{why:{boreLength:t.line.length,years:yrs,diggers:t.workers.length}});
+      toast('⛏ The tunnel is open: the mountain road is no more.',t.camp.x,t.camp.y);
     }
   }
 }
@@ -3898,6 +4026,22 @@ function updateAnimals(){
     a.age++;
     const sp=SPECIES[a.sp];
     if(!(sp.beast||a.legend)&&a.age>ri(3000,4600)*(sp.amph?3:1)){dead.push(a);continue}
+    // hunger kills: an animal that finds nothing for weeks lies down and does not rise
+    if(!sp.water&&!sp.pred&&!sp.amph){
+      if((a.hun||0)>=0.98){
+        a._starv=(a._starv||0)+1;
+        if(a._starv>18){
+          a._cause=a.dom!==undefined?'starved in the pen, its keepers with nothing to bring':'starved when the pastures gave out';
+          if(a.dom!==undefined&&sim.settlements[a.dom]&&!sim.settlements[a.dom].razed){
+            const so=sim.settlements[a.dom];
+            if(!so._stvY||curYear()-so._stvY>1){so._stvY=curYear();
+              logEvent('calamity','The penned beasts of '+so.nm+' are starving; the granary spares them nothing.',so.x,so.y,{sett:so.id},
+                {why:{granary:Math.round(so.inv?so.inv[GX.grain]:0)}});}
+          }
+          dead.push(a);continue;
+        }
+      }else if(a._starv)a._starv=0;
+    }
     // deep water is deep water, legend or no: a stranded land animal swims for shore or goes under
     if(!sp.water&&!sp.amph&&isWater(world.biome[idx(a.x,a.y)])){
       let ashore=false;
@@ -4083,6 +4227,7 @@ function stepAnimal(a,dx,dy,fleeing){
   const i=idx(nx,ny);
   if(!passable(i))return false;
   if(world.building[i]===BUILD.FENCE)return false; // a fence is a fence, to wolf and cow alike
+  if(world.building[i]===BUILD.GATE&&a.dom!==world.settleId[i])return false; // the gate opens only for the town's own herd
   if(world.settleId[i]>=0&&!fleeing&&world.settleId[i]!==a.dom)return false; // livestock may walk its own town
   a.x=nx;a.y=ny;
   a.fat=Math.min(1,(a.fat||0)+0.01);
@@ -4266,6 +4411,10 @@ function instinctAnimalUpdate(a,sp,dead){
       if(dh>(hst.pen?2:7)){a.act='returning to the '+(hst.pen?'pen':'herd')+' at '+hst.nm;
         if(!stepAnimal(a,Math.sign(tx2-a.x),Math.sign(ty2-a.y),false)){const k=ri(0,7);stepAnimal(a,DX8[k],DY8[k],false)} // feel along the fence for the gate
         return}
+      // a penned animal on bare ground eats what its keeper brings, or nothing
+      if(hst.pen&&dh<=2&&(a.hun||0)>0.45&&hst.inv&&hst.inv[GX.grain]>3){
+        hst.inv[GX.grain]-=0.25;a.hun=0.1;a.act='fed at the trough by its keeper';return;
+      }
     }
   }
   // ---- senses ----
@@ -4310,6 +4459,7 @@ function instinctAnimalUpdate(a,sp,dead){
     if(carc){
       const cs=corpseStage(carc);
       if(cs==='bones'||(cs==='rotten'&&scavAff<0.9))carc=null;
+      else if(a.dom!==undefined&&carc.sp===a.sp)carc=null; // a kept animal will not eat its own kind
       else if(!a.sense)a.sense='smells carrion, '+Math.max(Math.abs(carc.x-a.x),Math.abs(carc.y-a.y))+' tiles off';
     }
   }
@@ -4936,6 +5086,7 @@ function monthly(){
   }
   // trade launches only where a real profit clears the road cost
   homesMonthly();
+  tunnelMonthly();
   vegMonthly();
   tradeMonthly();
   if(typeof knowledgeMonthly==='function')knowledgeMonthly();
@@ -5004,7 +5155,7 @@ function assignProfessions(){
     if(st.razed)continue;
     const adults=[];
     for(const p of sim.people.values()){
-      if(p.home!==st.id||p.inArmy||p.sea)continue; // a hand at sea keeps the trade they sailed with
+      if(p.home!==st.id||p.inArmy||p.sea||p.tun)continue; // a hand at sea or at the digging keeps the trade they left with
       const age=(sim.day-p.born)/DAYS_Y;
       if(p.prof==='leader')continue;
       if(age<16){p.prof='child';continue}
@@ -5050,6 +5201,7 @@ function assignProfessions(){
 }
 function quarterly(){
   assignProfessions();
+  tunnelQuarterly();
   if(world.pro)proQuarterlySocial();
   if(typeof stewardsQuarterly==='function')stewardsQuarterly();
   // geography flags feed the economy: ore in reach, hot salt coasts
@@ -5471,6 +5623,7 @@ function renderTerrain(vr,season,phase){
         else if(sc===2){ch='~';fg=SCAR_MUD_FG}                   // dry lakebed
         else if(sc===3){ch=BURN_G[v%3];fg=SCAR_BURN_FG}         // burn scar
         else if(sc===4){ch=RUIN_G[v%4];fg=SCAR_RUIN_FG}         // ruins
+        else if(sc===6){ch='∩';fg='#a39a8c'}                     // a tunnel bored through the rock
         else{ch=[',','τ','.','τ'][v%4];fg=season===3?'#8b8e93':'#8a7a4e'} // stumps
       }else{
         ch=def.glyphs[(isWater(b)?v+phase:v)%def.glyphs.length];
@@ -6699,6 +6852,44 @@ function renderTile(x,y){
   const bld=world.building[i];
   if(bld)h+='<div class="kv"><div class="k">Structure</div><div class="v">'+BUILD_DEF[bld].name+'</div></div>';
   if(world.resource[i])h+='<div class="kv"><div class="k">Resource</div><div class="v">'+RES_DEF[world.resource[i]].name+'</div></div>';
+  if(world.cut[i]===6){
+    const tn=(sim.tunnels||[]).find(t2=>t2.line&&t2.line.indexOf(i)>=0);
+    h+='<h3>A tunnel in the rock</h3>';
+    if(tn){
+      const sp2=sim.settlements[tn.sponsor];
+      h+='<div class="sub">'+(tn.state==='done'?'open passage under the mountain':tn.state==='digging'?'the bore advances; you can hear the picks':'an abandoned dig, silent these long years')+
+        (sp2?' · begun by '+L('sett',tn.sponsor,sp2.nm):'')+' · Y'+Math.floor(tn.began/DAYS_Y)+'</div>';
+      if(tn.state==='digging')h+='<div class="kv"><div class="k">Dug</div><div class="v">'+Math.min(tn.line.length,Math.floor(tn.prog/10))+' of '+tn.line.length+' lengths</div><div class="k">Diggers</div><div class="v">'+tn.workers.length+'</div></div>';
+    }else h+='<div class="sub">cut stone; the hands that cut it are not remembered here</div>';
+  }
+  if(world.building[i]===BUILD.STORE){
+    const sid3=world.settleId[i];
+    const sst=sid3>=0?sim.settlements[sid3]:null;
+    if(sst){
+      h+='<h3>The storehouse of '+esc(sst.nm)+'</h3><div class="kv">';
+      h+='<div class="k">Timber</div><div class="v">'+Math.round(sst.stock.wood)+' logs stacked, of '+(typeof woodCap==='function'?woodCap(sst):100)+' the town can keep dry</div>';
+      h+='<div class="k">Stone</div><div class="v">'+Math.round(sst.stock.stone)+'</div>';
+      if(sst.inv){
+        h+='<div class="k">Granary</div><div class="v">'+Math.round(typeof foodTotal==='function'?foodTotal(sst):0)+' of grain, fish, and meat</div>';
+        if(sst.inv[GX.salt]>=1)h+='<div class="k">Salt</div><div class="v">'+Math.round(sst.inv[GX.salt])+'</div>';
+        if(sst.inv[GX.tools]>=1)h+='<div class="k">Tools</div><div class="v">'+Math.round(sst.inv[GX.tools])+'</div>';
+        if(sst.inv[GX.metal]>=1)h+='<div class="k">Metal</div><div class="v">'+Math.round(sst.inv[GX.metal])+'</div>';
+      }
+      h+='</div><div class="sub" style="font-size:11px">every log here rode home on a real back; every plank drawn from it built something you can find</div>';
+    }
+  }
+  if(world.building[i]===BUILD.FENCE||world.building[i]===BUILD.GATE){
+    const sid4=world.settleId[i];
+    const fst=sid4>=0?sim.settlements[sid4]:null;
+    if(fst&&fst.pen){
+      let herd2=0;for(const a2 of sim.animals)if(a2.dom===fst.id)herd2++;
+      h+='<h3>The pen of '+esc(fst.nm)+'</h3><div class="kv">';
+      h+='<div class="k">Timbers</div><div class="v">'+(fst.pen.cond>0.66?'sound':fst.pen.cond>0.33?'weathering':'rotting, a bold beast could clear them')+'</div>';
+      h+='<div class="k">Herd</div><div class="v">'+herd2+' head kept</div>';
+      if(world.building[i]===BUILD.GATE)h+='<div class="k">Gate</div><div class="v">opened for the town\'s own beasts, barred to everything wild</div>';
+      h+='</div>';
+    }
+  }
   if(world.building[i]===BUILD.GRAVE){
     const sid2=world.settleId[i];
     const gst=sid2>=0?sim.settlements[sid2]:null;
@@ -6768,6 +6959,10 @@ function renderPerson(id){
     else if(p.hx!==undefined)h+='<div class="k">Roof</div><div class="v"><span class="lnk" data-j="'+p.hx+','+p.hy+'">the family house at '+p.hx+', '+p.hy+'</span></div>';
   }
   if(!dead&&p.inArmy&&!p.sea)h+='<div class="k">Status</div><div class="v">marching with the host</div>';
+  if(!dead&&p.tun){
+    const tn2=(sim.tunnels||[]).find(t2=>t2.id===p.tun);
+    h+='<div class="k">Status</div><div class="v">digging the tunnel under the mountains'+(tn2?' , <span class="lnk" data-j="'+tn2.camp.x+','+tn2.camp.y+'">at the works</span>':'')+'</div>';
+  }
   if(!dead&&p.sea){
     const sh=sim.ships.find(x=>x.id===p.sea&&!x.dead);
     const KN={fisher:'a fishing boat',trade:'a trade cog',settle:'a settler ship',war:'a war fleet'};
@@ -7382,7 +7577,9 @@ function pickAt(cx,cy){
   for(const a of sim.animals)if(a.x===wx&&a.y===wy){sel={type:'animal',id:a.id};done();return}
   for(const c of sim.corpses)if(c.x===wx&&c.y===wy){sel={type:'corpse',id:c.id};done();return}
   const sid=world.settleId[idx(wx,wy)];
-  if(sid>=0&&sim.settlements[sid]&&!sim.settlements[sid].razed&&world.building[idx(wx,wy)]){sel={type:'sett',id:sid};done();return}
+  const bldAt=world.building[idx(wx,wy)];
+  const openAsTile=bldAt===BUILD.GRAVE||bldAt===BUILD.STORE||bldAt===BUILD.FENCE||bldAt===BUILD.GATE;
+  if(sid>=0&&sim.settlements[sid]&&!sim.settlements[sid].razed&&bldAt&&!openAsTile){sel={type:'sett',id:sid};done();return}
   sel={type:'tile',x:wx,y:wy};done();
   function done(){ui.trail=[];trailPush(sel);$('#side').classList.remove('hidden');mmPos();ui.setTab('inspect')}
 }
@@ -7642,6 +7839,7 @@ function saveString(){
       armies:sim.armies,caravans:sim.caravans,migrants:sim.migrants,
       evSeq:sim.evSeq,
       yb:sim.yb||0,yd:sim.yd||0,yfever:sim.yfever||0,lastYB:sim.lastYB||0,lastYD:sim.lastYD||0,
+      tunnels:sim.tunnels||[],
       mon:sim.mon||{},currencies:sim.currencies||[],
       settlements:sim.settlements.map(s=>{
         const r={};
@@ -7682,6 +7880,7 @@ function loadString(str){
   sim.fires=s.fires||{};
   sim.evSeq=s.evSeq||((sim.events&&sim.events.length)?Math.max(...sim.events.map(e=>e.id||0))+1:1);
   sim.yb=s.yb||0;sim.yd=s.yd||0;sim.yfever=s.yfever||0;sim.lastYB=s.lastYB||0;sim.lastYD=s.lastYD||0;
+  sim.tunnels=s.tunnels||[];
   rebuildEvMap();
   sim.ships=s.ships||[];sim.relics=s.relics||[];sim.eras=s.eras||[];sim.books=s.books||[];
   sim.beast=s.beast||null;

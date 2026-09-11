@@ -178,6 +178,8 @@ Wood is a physical pipeline end to end. A woodcutter walks to a standing tree, f
 
 Fences are bought with counted losses, never scripted. Every head of livestock a predator takes is tallied by the owning town, and only a town that has bled enough animals, and has the logs stacked, rings its pasture with a timber pen, gate and all. Penned herds keep to the pen and manure its soil. Fences rot without yearly logs for upkeep, and a starving, bold wolf can clear a rotting fence in one leap; the raid is the same hungry decision it always was, the pen just concentrated the prey. When the herds are struck, the town's bravest hunter or soldier answers, and the one who kills the wolf at the pens earns renown, the same renown that crowns kings.
 
+![A fenced pen with its gate beside the houses of a hamlet, graves on the rise behind](screenshots/26-pen.png)
+
 Every death in a living town becomes a real grave on real graveyard ground at the town's edge (the drowned get none; the sea keeps them). A grave endures while someone living actually remembers the person, read from the real kinship, bond, and memory systems. When the last rememberer dies the stone weathers, and in time the grass takes it. The renowned get monuments that outlast memory. Click any grave tile: the monuments, the stones still read, the ones weathering, and the count worn beyond any name.
 
 ### Physical extraction
