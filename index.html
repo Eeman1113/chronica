@@ -1502,13 +1502,47 @@ function settHarbor(st){
   return false;
 }
 function newShip(o){const s=Object.assign({id:sim.nextId++,rx:o.x,ry:o.y,pi:0,dead:false,age:0},o);sim.ships.push(s);return s}
+function crewAshore(s){
+  // the crew wades to the nearest land and carries on with their lives
+  if(!s.members)return;
+  const land=landNearWater(s.x,s.y)||{x:s.x,y:s.y};
+  for(const pid of s.members){
+    const p=sim.people.get(pid);
+    if(!p||p.dead)continue;
+    p.sea=0;p.x=land.x;p.y=land.y;p.rx=land.x;p.ry=land.y;
+    if(p.home<0||!sim.settlements[p.home]||sim.settlements[p.home].razed){
+      const st2=sim.settlements.find(q=>!q.razed&&q.fac===p.fac);
+      if(st2)p.home=st2.id;
+    }
+  }
+}
+function sinkShip(s){
+  s.dead=true;
+  let drowned=0;
+  if(s.members)for(const pid of s.members){
+    const p=sim.people.get(pid);
+    if(p&&!p.dead){p.sea=0;p.inArmy=0;killPerson(p,'lost at sea when the ship went down in a storm');drowned++}
+  }
+  const f=sim.factions[s.fac];
+  const KIND={fisher:'fishing boat',trade:'trade cog',settle:'settler ship',war:'war fleet'};
+  logEvent('calamity','A '+(KIND[s.kind]||'ship')+(f?' of the '+facTitle(f):'')+' founders in the storm'+(drowned?'; '+drowned+' souls go down with her':'')+'.',
+    s.x,s.y,{fac:s.fac},{why:{storm:1,daysAtSea:s.age,soulsAboard:drowned},cause:'a storm on the open water'});
+  if(s.kind==='trade'&&typeof launchTradeFlagClear==='function')launchTradeFlagClear(s.from);
+}
 function updateShips(){
   for(const s of sim.ships){
     if(s.dead)continue;
     s.age++;
+    // the crew rides where the hull rides
+    if(s.members)for(const pid of s.members){
+      const p=sim.people.get(pid);
+      if(p&&!p.dead){p.sea=s.id;p.x=s.x;p.y=s.y;p.rx=s.x;p.ry=s.y}
+    }
+    // the sea keeps its toll: a storm can take any hull, and the coast-huggers least of all
+    if(sim.weather.type==='storm'&&chance(s.kind==='fisher'?0.0012:0.004)){sinkShip(s);continue}
     const home=sim.settlements[s.from];
     if(s.kind==='fisher'){
-      if(!home||home.razed||!home.popC){s.dead=true;continue}
+      if(!home||home.razed||!home.popC){crewAshore(s);s.dead=true;continue}
       // drift the nearby sea, feed the town
       if(chance(0.6)){const k=ri(0,7),nx=s.x+DX8[k],ny=s.y+DY8[k];
         if(inb(nx,ny)&&seaPassable(idx(nx,ny))&&Math.abs(nx-home.x)<10&&Math.abs(ny-home.y)<10){s.x=nx;s.y=ny}}
@@ -1527,6 +1561,18 @@ function updateShips(){
 function shipArrive(s){
   s.dead=true;
   if(s.kind==='trade'){
+    if(s.ret){
+      // home again: the crew steps off at their own quay
+      const src=sim.settlements[s.from];
+      if(s.members)for(const pid of s.members){
+        const p=sim.people.get(pid);
+        if(!p||p.dead)continue;
+        p.sea=0;
+        if(src&&!src.razed){p.x=src.x;p.y=src.y;p.rx=src.x;p.ry=src.y}
+      }
+      if(!src||src.razed)crewAshore(s);
+      return;
+    }
     const dest=sim.settlements[s.to],src=sim.settlements[s.from];
     if(dest&&!dest.razed){
       econArrive(s,dest,src);
@@ -1537,8 +1583,25 @@ function shipArrive(s){
       if(s.plague&&!dest.plague&&chance(0.35))startPlague(dest,'brought ashore by a trade ship from '+(src?src.nm:'over the sea'));
     }
     if(src)launchTradeFlagClear(src.id);
+    // cargo sold; the ship turns for home along her own wake
+    if(s.members&&s.members.length&&src&&!src.razed&&s.path&&s.path.length){
+      s.ret=1;s.cargo=null;s.path=s.path.slice().reverse();s.pi=0;s.dead=false;
+      return;
+    }
+    // no way home: the crew settles where the sea left them
+    if(s.members&&s.members.length){
+      const land=dest&&!dest.razed?{x:dest.x,y:dest.y}:landNearWater(s.x,s.y);
+      for(const pid of s.members){
+        const p=sim.people.get(pid);
+        if(!p||p.dead)continue;
+        p.sea=0;
+        if(dest&&!dest.razed){p.home=dest.id}
+        if(land){p.x=land.x;p.y=land.y;p.rx=land.x;p.ry=land.y}
+      }
+    }
   }else if(s.kind==='settle'){
     const land=landNearWater(s.x,s.y);
+    if(s.members)for(const pid of s.members){const p=sim.people.get(pid);if(p)p.sea=0}
     if(land&&siteScore(s.dx,s.dy)>0){
       const st=foundSettlement(s.dx,s.dy,s.fac,s.members,undefined,s.why);
       logEvent('found','Settlers cross the sea to found '+st.nm+' for the '+facTitle(sim.factions[s.fac])+'.',st.x,st.y,{sett:st.id,fac:s.fac});
@@ -1551,6 +1614,7 @@ function shipArrive(s){
     }
   }else if(s.kind==='war'){
     const land=landNearWater(s.x,s.y);
+    if(s.members)for(const pid of s.members){const p=sim.people.get(pid);if(p)p.sea=0}
     const t=sim.settlements[s.target];
     if(land&&t&&!t.razed&&areAtWar(s.fac,t.fac)){
       sim.armies.push({id:sim.nextId++,fac:s.fac,x:land.x,y:land.y,rx:land.x,ry:land.y,members:s.members,
@@ -1568,7 +1632,20 @@ function monthlySea(){
     const nF=sim.ships.filter(s=>!s.dead&&s.kind==='fisher'&&s.from===st.id).length;
     if(nF<Math.min(2,Math.ceil(st.popC/25))){
       const w=coastWaterNear(st.x,st.y,8);
-      if(w)newShip({kind:'fisher',fac:st.fac,from:st.id,x:w.x,y:w.y});
+      if(w){
+        // a boat is only wood until fishers step aboard
+        const crew=[];
+        for(const p of sim.people.values()){
+          if(crew.length>=2)break;
+          if(p.home!==st.id||p.inArmy||p.sea||p.dead)continue;
+          if((sim.day-p.born)<16*DAYS_Y)continue;
+          if(p.prof==='fisher'||(crew.length&&p.prof==='laborer'))crew.push(p.id);
+        }
+        if(crew.length){
+          const sh=newShip({kind:'fisher',fac:st.fac,from:st.id,x:w.x,y:w.y,members:crew});
+          for(const pid of crew){const p=sim.people.get(pid);if(p){p.sea=sh.id;p.path=null;p.mission=null}}
+        }
+      }
     }
     // trade ships now sail only when an arbitrage profit clears the voyage (tradeMonthly in the economy module)
   }
@@ -1601,8 +1678,9 @@ function trySeaMigration(st){
   for(const p of fams){if(members.length>=10)break;members.push(p.id)}
   if(members.length<6)return;
   for(const pid of members){const p=sim.people.get(pid);if(p){p.home=-1;p.path=null;p.mission=null;p.x=a.x;p.y=a.y}}
-  newShip({kind:'settle',fac:st.fac,from:st.id,x:a.x,y:a.y,path,members,dx:best.x,dy:best.y,
+  const sh=newShip({kind:'settle',fac:st.fac,from:st.id,x:a.x,y:a.y,path,members,dx:best.x,dy:best.y,
     why:'founded from across the sea by settlers of '+st.nm+(st.famine>50?', driven out by famine':', seeking room to grow')});
+  for(const pid of members){const p=sim.people.get(pid);if(p)p.sea=sh.id}
   logEvent('misc','A settler ship sails from '+st.nm+' in search of new shores.',st.x,st.y,{sett:st.id});
 }
 function armyToSea(a,tx,ty){
@@ -1612,7 +1690,8 @@ function armyToSea(a,tx,ty){
   if(!w1||!w2)return false;
   const path=findSeaPath(w1.x,w1.y,w2.x,w2.y,8000);
   if(!path)return false;
-  newShip({kind:'war',fac:a.fac,from:a.home,x:w1.x,y:w1.y,path,members:a.members,target:a.target,gen:a.gen});
+  const shw=newShip({kind:'war',fac:a.fac,from:a.home,x:w1.x,y:w1.y,path,members:a.members,target:a.target,gen:a.gen});
+  for(const pid of a.members){const p=sim.people.get(pid);if(p)p.sea=shw.id}
   logEvent('war','The host of the '+facTitle(sim.factions[a.fac])+' takes to the sea.',a.x,a.y,{fac:a.fac});
   a.members=[];a.dead=true;
   return true;
@@ -2256,8 +2335,18 @@ function tradeMonthly(){
         const sp=findSeaPath(a.x,a.y,b.x,b.y,7000);
         if(sp){
           st.inv[best.g]-=best.qty;st._car=true;
-          sim.ships.push({id:sim.nextId++,kind:'trade',fac:st.fac,from:st.id,to:dest.id,x:a.x,y:a.y,rx:a.x,ry:a.y,
-            path:sp,pi:0,dead:false,age:0,relig:st.religion,plague:st.plague?1:0,cargo:{g:best.g,qty:best.qty}});
+          // a cog needs hands: a trader to strike the bargain and a sailor to work the sheets
+          const crew=[];
+          for(const p of sim.people.values()){
+            if(crew.length>=2)break;
+            if(p.home!==st.id||p.inArmy||p.sea||p.dead)continue;
+            if((sim.day-p.born)<16*DAYS_Y)continue;
+            if(p.prof==='trader'||(crew.length&&(p.prof==='laborer'||p.prof==='fisher')))crew.push(p.id);
+          }
+          const shp={id:sim.nextId++,kind:'trade',fac:st.fac,from:st.id,to:dest.id,x:a.x,y:a.y,rx:a.x,ry:a.y,
+            path:sp,pi:0,dead:false,age:0,relig:st.religion,plague:st.plague?1:0,cargo:{g:best.g,qty:best.qty},members:crew};
+          sim.ships.push(shp);
+          for(const pid of crew){const p=sim.people.get(pid);if(p){p.sea=shp.id;p.path=null;p.mission=null}}
         }
       }
     }
@@ -3407,6 +3496,10 @@ function updatePeople(){
     if(st&&st.famine>25)mort+=0.00025;
     if(rnd()<mort){deadQ.push([p,'died at '+Math.floor(ageY)+(st?' in '+st.nm:'')]);continue}
     if(p.inArmy)continue;
+    if(p.sea){ // aboard ship: the hull carries them, the sea rules them
+      if(sim.day%90===7&&!sim.ships.some(s2=>s2.id===p.sea&&!s2.dead))p.sea=0; // a ghost berth is no berth
+      else continue;
+    }
     // profession transitions
     if(p.prof==='child'&&ageY>=16){p.prof='laborer';bio(p,'Came of age');
       if(typeof inheritMemories==='function')inheritMemories(p)} // the old wounds are told to the young
@@ -4645,6 +4738,7 @@ function monthly(){
       for(let k=0;k<roll;k++){
         const v=randomResident(st);
         if(!v)break;
+        if(v.sea)continue; // the fevers of the lanes do not reach a deck at sea
         const ageV=(sim.day-v.born)/DAYS_Y;
         // fevers take the very young and the old first
         if(v.homeless||ageV<6||ageV>50||rnd()<0.55)killPerson(v,v.homeless?'died of a fever, homeless in the lanes of '+st.nm:'died of a fever in the crowded lanes of '+st.nm);
@@ -5296,6 +5390,7 @@ function render(dt){
   }
   // people
   if(showEnt)for(const p of sim.people.values()){
+    if(p.sea)continue; // below deck
     if(p.inArmy||p.home<0&&!p.path&&false)continue;
     if(p.inArmy)continue;
     smooth(p,dt);
@@ -5417,6 +5512,7 @@ function followEntity(){
   if(f.type==='army')return sim.armies.find(a=>a.id===f.id&&!a.dead)||null;
   if(f.type==='caravan')return sim.caravans.find(c=>c.id===f.id&&!c.dead)||null;
   if(f.type==='animal')return sim.animals.find(a=>a.id===f.id)||null;
+  if(f.type==='ship')return sim.ships.find(s=>s.id===f.id&&!s.dead)||null;
   return null;
 }
 
@@ -6369,6 +6465,7 @@ function selLabel(s){
     if(s.type==='religion'){const r=sim.religions[s.id];return r?r.nm:null}
     if(s.type==='animal'){const a=sim.animals.find(x=>x.id===s.id);return a?SPECIES[a.sp].name:null}
     if(s.type==='army')return 'a host';
+    if(s.type==='ship')return 'a ship';
     if(s.type==='corpse')return 'a carcass';
     if(s.type==='relic'){const r=sim.relics[s.id];return r?r.nm:null}
     if(s.type==='tile')return s.x+','+s.y;
@@ -6403,6 +6500,7 @@ function renderInspect(){
     case 'sett':return renderSett(sel.id);
     case 'fac':return renderFac(sel.id);
     case 'army':return renderArmy(sel.id);
+    case 'ship':return renderShip(sel.id);
     case 'animal':return renderAnimal(sel.id);
     case 'religion':return renderReligion(sel.id);
     case 'relic':return renderRelic(sel.id);
@@ -6465,7 +6563,12 @@ function renderPerson(id){
     if(p.homeless)h+='<div class="k">Roof</div><div class="v" style="color:#d9a05a">none; sleeps in the lanes, waiting on the housing allotment</div>';
     else if(p.hx!==undefined)h+='<div class="k">Roof</div><div class="v"><span class="lnk" data-j="'+p.hx+','+p.hy+'">the family house at '+p.hx+', '+p.hy+'</span></div>';
   }
-  if(!dead&&p.inArmy)h+='<div class="k">Status</div><div class="v">marching with the host</div>';
+  if(!dead&&p.inArmy&&!p.sea)h+='<div class="k">Status</div><div class="v">marching with the host</div>';
+  if(!dead&&p.sea){
+    const sh=sim.ships.find(x=>x.id===p.sea&&!x.dead);
+    const KN={fisher:'a fishing boat',trade:'a trade cog',settle:'a settler ship',war:'a war fleet'};
+    h+='<div class="k">Status</div><div class="v">at sea aboard '+(sh?KN[sh.kind]||'a ship':'a ship')+(sh?' , <span class="lnk" data-j="'+sh.x+','+sh.y+'">find her</span>':'')+'</div>';
+  }
   h+='</div>';
   if(!dead){
     h+='<h3>Nature</h3>';
@@ -6653,6 +6756,46 @@ function renderFac(id){
     h+='<h3>Library</h3>';
     for(const b of books.slice(-6))h+=L('book',b.id,'✍ '+b.title)+'<br>';
   }
+  return h;
+}
+function renderShip(id){
+  const s=sim.ships.find(x=>x.id===id&&!x.dead);
+  if(!s)return '<div class="sub">Only the wake remains; the ship has passed on or gone down.</div>';
+  const f=sim.factions[s.fac];
+  const from=sim.settlements[s.from];
+  const to=s.to!==undefined?sim.settlements[s.to]:(s.target!==undefined?sim.settlements[s.target]:null);
+  const KIND={fisher:'Fishing boat',trade:'Trade cog',settle:'Settler ship',war:'War fleet'};
+  let h='<h2>⊳ '+(KIND[s.kind]||'Ship')+'</h2>';
+  h+='<div class="sub">'+(f?'flying the colors of the '+L('fac',f.id,facTitle(f))+' · ':'')+(s.kind==='fisher'?(s.age>=360?Math.floor(s.age/360)+' years in service':s.age+' days in service'):s.age+' days at sea')+'</div>';
+  h+='<div class="kv" style="margin-top:6px">';
+  if(from&&!from.razed)h+='<div class="k">Out of</div><div class="v">'+L('sett',from.id,from.nm)+'</div>';
+  if(s.kind==='trade'&&(to||s.ret))h+='<div class="k">Bound for</div><div class="v">'+(s.ret?(from?L('sett',from.id,from.nm):'home')+' , the run home':to?L('sett',to.id,to.nm):'a far quay')+'</div>';
+  if(s.kind==='war'&&to)h+='<div class="k">Sailing against</div><div class="v">'+L('sett',to.id,to.nm)+'</div>';
+  if(s.kind==='settle')h+='<div class="k">Bound for</div><div class="v"><span class="lnk" data-j="'+s.dx+','+s.dy+'">unclaimed shores at '+s.dx+', '+s.dy+'</span></div>';
+  if(s.kind==='fisher')h+='<div class="k">Working</div><div class="v">the waters off '+(from?from.nm:'the home coast')+'</div>';
+  if(s.cargo)h+='<div class="k">Cargo</div><div class="v">'+Math.round(s.cargo.qty)+' '+GOODS[s.cargo.g]+'</div>';
+  else if(s.ret)h+='<div class="k">Cargo</div><div class="v">sold; sailing home with the earnings</div>';
+  if(s.path&&s.path.length&&s.kind!=='fisher')h+='<div class="k">Voyage</div><div class="v">'+Math.max(0,s.path.length-s.pi)+' sea-tiles to landfall</div>';
+  h+='</div>';
+  const mission={fisher:'letting out the nets and hauling the catch back to the home quay',
+    trade:(s.ret?'homeward, the bargain struck':'carrying goods to where the prices say they are wanted'),
+    settle:'seeking an empty coast to begin again',
+    war:'ferrying a host to a hostile shore'}[s.kind];
+  if(mission)h+='<div class="sub" style="margin-top:6px">'+mission+'</div>';
+  h+='<h3>Aboard</h3>';
+  let shown=0;
+  if(s.members&&s.members.length){
+    for(const pid of s.members){
+      const p=sim.people.get(pid);
+      if(!p||p.dead)continue;
+      if(shown>=12){h+='<div class="sub">and '+(s.members.length-shown)+' more souls below deck</div>';break}
+      shown++;
+      const role=s.kind==='war'?(s.gen===pid?'captain of the host':'soldier'):s.kind==='settle'?'settler':(p.prof&&PROF_DEF[p.prof]?PROF_DEF[p.prof].name.toLowerCase():'deckhand');
+      h+='<div style="font-size:12px">'+L('person',pid,fullName(p))+' <span class="sub">'+role+'</span></div>';
+    }
+  }
+  if(!shown)h+='<div class="sub">no souls aboard; a hull launched before ships were crewed, or a crew already lost</div>';
+  h+='<div class="btnrow"><button data-act="followShip">⦿ Follow</button></div>';
   return h;
 }
 function renderArmy(id){
@@ -6919,6 +7062,7 @@ $('#panelbody').addEventListener('click',e=>{
     if(a==='follow'){cam.follow={type:'person',id:sel.id};avatarMode=false;const p=sim.people.get(sel.id);if(p)toast('Following '+fullName(p)+'. Click the map to stop.')}
     if(a==='followArmy')cam.follow={type:'army',id:sel.id};
     if(a==='followAnimal')cam.follow={type:'animal',id:sel.id};
+    if(a==='followShip')cam.follow={type:'ship',id:sel.id};
     if(a==='goto'){
       if(sel.type==='sett'){const st=sim.settlements[sel.id];if(st)jumpTo(st.x,st.y)}
       else if(sel.type==='person'){const p=sim.people.get(sel.id);if(p)jumpTo(p.x,p.y)}
@@ -7022,8 +7166,9 @@ function pickAt(cx,cy){
   if(!inb(wx,wy)){sel=null;ui.renderPanel(true);return}
   cam.follow=null;
   // priority: person > army > caravan > animal > settlement center-ish > tile
-  for(const p of sim.people.values())if(!p.inArmy&&p.x===wx&&p.y===wy){sel={type:'person',id:p.id};done();return}
+  for(const p of sim.people.values())if(!p.inArmy&&!p.sea&&p.x===wx&&p.y===wy){sel={type:'person',id:p.id};done();return}
   for(const a of sim.armies)if(!a.dead&&Math.abs(a.x-wx)<=0&&Math.abs(a.y-wy)<=0){sel={type:'army',id:a.id};done();return}
+  for(const s2 of sim.ships)if(!s2.dead&&s2.x===wx&&s2.y===wy){sel={type:'ship',id:s2.id};done();return}
   for(const a of sim.animals)if(a.x===wx&&a.y===wy){sel={type:'animal',id:a.id};done();return}
   for(const c of sim.corpses)if(c.x===wx&&c.y===wy){sel={type:'corpse',id:c.id};done();return}
   const sid=world.settleId[idx(wx,wy)];
@@ -7062,6 +7207,7 @@ addEventListener('keydown',e=>{
     if(sel&&sel.type==='person')cam.follow={type:'person',id:sel.id};
     else if(sel&&sel.type==='army')cam.follow={type:'army',id:sel.id};
     else if(sel&&sel.type==='animal')cam.follow={type:'animal',id:sel.id};
+    else if(sel&&sel.type==='ship')cam.follow={type:'ship',id:sel.id};
   }
   else if(k==='Escape'){$('#modal').classList.add('hidden');tlSetPlay(false);$('#tl').classList.add('hidden');cam.follow=null}
 });
