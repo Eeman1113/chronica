@@ -32,7 +32,10 @@ A real example from a test run, produced with zero scripting: a man named Torgar
 - Scattered resources: berry thickets, ore veins, and rich fisheries
 - Physical deforestation: every tree a woodcutter fells is really removed from the map, leaving stump fields that ring old towns, and the forest slowly grows back in from its standing edges over decades
 - Four seasons that recolor the entire map, weather fronts (rain, storms, snowfall, overcast skies), and drought years that wither crops
-- Wildlife with its own ecology: deer, hares, boar, foxes, wolves, bears, and fish shoals that graze, hunt each other, reproduce toward a population cap, and get hunted by people
+- Wildlife with its own ecology: deer, hares, boar, foxes, wolves, bears, cows, pigs, horses, lions, tigers, crocodiles, salmon, and fish shoals that graze, hunt each other, reproduce toward a population cap, and get hunted by people
+- Salmon live full emergent lives: a heritable urge pulls the mature fish upstream as the water cools, they spawn in the gravel of whichever headwater their own river offers, and the run costs them everything; the spent fish drift, die, and feed the banks and the bears
+- Crocodiles are patient ambush minds at the water's edge: hunger that grows slowly for weeks, basking when cold, torpor in hard winters, territory yielded to bigger rivals, carrion stolen from the shore, and everything that comes down to drink is prey, sometimes including people; a crocodile with a body count earns a name and becomes a legend
+- Nobody teleports home and nobody is silently rehoused: each family holds one house with room for six, a monthly allotment assigns roofs with the wealthiest keeping theirs, families that do not fit are homeless and sleep in the lanes where fevers find them first, and a homeless family with coin enough will pay to raise its own house
 
 ### The people
 Every person has:
@@ -185,6 +188,9 @@ Every event above is recorded with its year and location: foundings, wars, battl
 ---
 
 ## The interface
+
+### The World Observatory
+The right sidebar is not a dashboard, it is an observatory into the world. Chronica has no player, only an observer, and the observer can descend from the whole world to a single fish. Six views: Inspect, World, Life, Society, Nature, History. The World overview answers "what is this world right now" with population, realms, money systems, forest cover, active fires, births and deaths this year, and every number is clickable and drills down into its own section: sortable people and settlement indexes, family registers, per species animal pages with gene drift, a carrion ledger, the economy observatory with per realm money stages and the full currency ledger, a technology observatory that lists the living masters of every craft, food webs computed from the live ecology, and a causality browser over every event that carries decision weights. A global search spans people, the dead, settlements, realms, faiths, species, and the chronicle, and a breadcrumb trail records the observer's descent. Nothing shown is invented: every number is computed from simulation state at the moment you look, and what is not simulated is simply not displayed.
 
 ![The realms panel: living empires, fallen realms, and faiths](screenshots/05-realms.jpg)
 

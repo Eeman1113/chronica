@@ -54,6 +54,14 @@ input:focus,select:focus,textarea:focus{outline:1px solid var(--dim)}
 #panelbody .kv .k{color:var(--faint)}
 #panelbody .kv .v{color:var(--par);font-variant-numeric:tabular-nums}
 .lnk{color:#d8c88f;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px}
+.obsK{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin:10px 0 4px;border-bottom:1px solid var(--line);padding-bottom:2px}
+.obsL{display:block;padding:4px 8px;border:1px solid var(--line);border-radius:2px;margin:4px 0;cursor:pointer;color:var(--dim);font-size:12px}
+.obsL:hover{background:#1c1712;color:var(--par)}
+.obsL b{color:var(--par)}
+.onum{color:#d8c88f;cursor:pointer}
+.onum:hover{text-decoration:underline}
+.bc{font-size:10px;color:var(--faint);margin:0 0 6px}
+.bc .lnk{color:var(--faint)}
 .lnk:hover{color:#f4e6b6}
 .chip{display:inline-block;padding:0 6px;border:1px solid var(--line);border-radius:9px;font-size:11px;color:var(--dim);margin:1px 2px 1px 0}
 .sw{display:inline-block;width:9px;height:9px;border-radius:2px;vertical-align:-1px;margin-right:5px}
@@ -149,9 +157,11 @@ table.t td{font-variant-numeric:tabular-nums}
 <div id="side">
   <div id="tabs">
     <button data-tab="inspect" class="on">Inspect</button>
-    <button data-tab="realms">Realms</button>
-    <button data-tab="chronicle">Chronicle</button>
-    <button data-tab="stats">Statistics</button>
+    <button data-tab="world">World</button>
+    <button data-tab="life">Life</button>
+    <button data-tab="society">Society</button>
+    <button data-tab="nature">Nature</button>
+    <button data-tab="history">History</button>
   </div>
   <div id="panelbody"></div>
 </div>
@@ -311,10 +321,11 @@ const SPECIES=[
  {g:'h',name:'Horse',c:'#b8a06e',cap:50,herbivore:true,dom:true,fast:true,g0:[1.3,1.0,1.1,1.3],biomes:[B.GRASS,B.SHRUB,B.TUNDRA]},
  {g:'L',name:'Lion', c:'#d8b45a',cap:12,pred:true,dangerous:true,g0:[0.7,1.1,1.4,1.0],biomes:[B.DESERT,B.SHRUB,B.GRASS]},
  {g:'T',name:'Tiger',c:'#d8813c',cap:12,pred:true,dangerous:true,g0:[1.1,1.2,1.2,0.6],biomes:[B.FOREST,B.SWAMP]},
- {g:'s',name:'Salmon',c:'#c98a8a',cap:70,water:true,river:true,biomes:[]}];
+ {g:'s',name:'Salmon',c:'#c98a8a',cap:70,water:true,river:true,g0:[1,1,1,1],biomes:[]},
+ {g:'C',name:'Crocodile',c:'#7f9150',cap:18,pred:true,dangerous:true,amph:true,g0:[0.6,0.8,1.3,1.2],biomes:[B.SWAMP]}];
 /* body mass (how much carrion a death leaves) and carrion affinity (who stoops to it) */
-const SP_MASS={Deer:10,Hare:3,Boar:9,Wolf:6,Bear:13,Fox:3,Cow:14,Pig:10,Horse:12,Lion:11,Tiger:11,'Great Beast':22};
-const SP_SCAV={Fox:1.2,Pig:1.1,Boar:1.0,Wolf:0.7,Bear:0.85,Lion:0.45,Tiger:0.45};
+const SP_MASS={Deer:10,Hare:3,Boar:9,Wolf:6,Bear:13,Fox:3,Cow:14,Pig:10,Horse:12,Lion:11,Tiger:11,Salmon:2,Crocodile:12,'Great Beast':22};
+const SP_SCAV={Fox:1.2,Pig:1.1,Boar:1.0,Wolf:0.7,Bear:0.85,Lion:0.45,Tiger:0.45,Crocodile:1.3};
 
 const FAC_COLORS=['#c56a5c','#6f9e75','#7a86c2','#c2a05a','#9a6fb8','#5ca5a5','#c07a9e','#8fa05a','#b3835a','#6f8fb8','#a5c05c','#b85a70'];
 
@@ -898,7 +909,9 @@ function seedAnimals(){
       tries++;
       const x=ri(1,world.W-2),y=ri(1,world.H-2);
       const b=world.biome[idx(x,y)];
-      const ok=sp.river?world.river[idx(x,y)]===1:sp.biomes.includes(b);
+      const wet=world.river[idx(x,y)]===1||b===B.LAKE||b===B.SWAMP;
+      const hot=Math.abs(y-world.H/2)/(world.H/2)<0.45;
+      const ok=sp.river?world.river[idx(x,y)]===1:sp.amph?(wet&&hot):sp.biomes.includes(b);
       if(ok){
         const a={id:sim.nextId++,sp:s,x,y,rx:x,ry:y,age:ri(0,1200),path:null,pi:0,hp:1};
         if(sp.g0)a.genes=mutateGenes(sp.g0); // species temperament as heritable priors
@@ -943,6 +956,7 @@ function newSim(){
   sim={day:0,nextId:1,people:new Map(),souls:new Map(),animals:[],armies:[],caravans:[],migrants:[],
     settlements:[],factions:[],religions:[],relations:{},events:[],evSeq:1,evMap:new Map(),fires:{},
     ships:[],relics:[],eras:[],books:[],snaps:[],beast:null,corpses:[],mon:{},currencies:[],
+    yb:0,yd:0,yfever:0,lastYB:0,lastYD:0,
     weather:{type:'clear',t:0},drought:false,
     stats:{yr:[],pop:[],wild:[],setts:[],fac:{}},
     pathQueue:[]};
@@ -1669,7 +1683,7 @@ function proYearlyWars(live){
 /* ---------- legends grown from real body counts ---------- */
 function noteAnimalKill(a){
   a.kills=(a.kills||0)+1;
-  if(!a.legend&&!sim.beast&&['Bear','Wolf','Lion','Tiger'].includes(SPECIES[a.sp].name)
+  if(!a.legend&&!sim.beast&&['Bear','Wolf','Lion','Tiger','Crocodile'].includes(SPECIES[a.sp].name)
      &&a.kills>=12&&a.age>1200&&(a.manKills||0)>=2){
     a.legend=true;a.hp=14;
     sim.beast={id:a.id,nm:beastName(a),born:sim.day,kills:a.manKills||0,grown:SPECIES[a.sp].name};
@@ -3060,19 +3074,65 @@ function stepAlong(e){
   if(e.pi>=e.path.length){e.path=null;e.pi=0}
 }
 function homeTile(p){
-  // a family keeps one house: everyone of a surname walks back to the same door, not the town square
+  // a family keeps one house: everyone of a surname walks back to the same door, not the town square.
+  // there is no silent reassignment: a burned or lost house means the family waits for the next
+  // allotment, and until then they sleep in the lanes around the square.
   const st=sim.settlements[p.home];
   if(!st||st.razed)return null;
   if(p.hst===p.home&&p.hx!==undefined){
     const i=idx(p.hx,p.hy);
     if(world.building[i]===BUILD.HOUSE&&world.settleId[i]===st.id)return{x:p.hx,y:p.hy};
+    p.hx=undefined; // the roof is gone; homelessness is decided at the monthly allotment, not papered over here
   }
-  const houses=[];
-  for(const i of st.tiles)if(world.building[i]===BUILD.HOUSE)houses.push(i);
-  if(!houses.length)return{x:st.x,y:st.y};
-  const h=houses[(hashStr(p.sur||'')>>>0)%houses.length];
-  p.hst=p.home;p.hx=h%world.W;p.hy=(h/world.W)|0;
-  return{x:p.hx,y:p.hy};
+  return null;
+}
+function homesMonthly(){
+  // the housing allotment: houses hold six souls; wealthier families keep their roofs,
+  // whoever does not fit is homeless until a house frees up or they pay to raise one
+  const byHome=new Map();
+  for(const p of sim.people.values()){
+    if(p.home<0||p.inArmy)continue;
+    let a=byHome.get(p.home);if(!a){a=[];byHome.set(p.home,a)}
+    a.push(p);
+  }
+  for(const st of sim.settlements){
+    if(st.razed){continue}
+    const res=byHome.get(st.id)||[];
+    if(!res.length){st.homeless=0;continue}
+    const houses=[];
+    for(const i of st.tiles)if(world.building[i]===BUILD.HOUSE)houses.push({i,room:6});
+    // families, wealthiest first: coin keeps a roof over your head
+    const fams=new Map();
+    for(const p of res){let f=fams.get(p.sur);if(!f){f={m:[],w:0,cur:-1};fams.set(p.sur,f)}f.m.push(p);f.w+=(p.wealth||0);
+      if(p.hst===st.id&&p.hx!==undefined)f.cur=idx(p.hx,p.hy)}
+    const order=[...fams.values()].sort((a,b)=>b.w-a.w);
+    const byTile=new Map();for(const h of houses)byTile.set(h.i,h);
+    let homeless=0;
+    for(const f of order){
+      // prefer the house the family already lives in, then any with room; big families may span two doors
+      const q=[];
+      const cur=f.cur>=0?byTile.get(f.cur):null;
+      if(cur)q.push(cur);
+      for(const h of houses)if(h!==cur)q.push(h);
+      let k=0;
+      for(const h of q){
+        while(k<f.m.length&&h.room>0){const p=f.m[k++];p.hst=st.id;p.hx=h.i%world.W;p.hy=(h.i/world.W)|0;p.homeless=0;h.room--}
+        if(k>=f.m.length)break;
+      }
+      for(;k<f.m.length;k++){const p=f.m[k];p.hx=undefined;p.homeless=1;homeless++}
+    }
+    st.homeless=homeless;
+    // a homeless family with coin enough will pay the town to raise a house rather than winter in the lanes
+    if(homeless>0&&st.stock.wood>=12){
+      let head=null;
+      for(const p of res)if(p.homeless&&(p.wealth||0)>=25&&(!head||p.wealth>head.wealth))head=p;
+      if(head){
+        head.wealth-=15;st.wealth=(st.wealth||0)+15;st.stock.wood-=12;
+        buildStruct(st,BUILD.HOUSE);
+        bio(head,'Paid fifteen coins to raise a house in '+st.nm+', tired of sleeping in the lanes');
+      }
+    }
+  }
 }
 function maybeStartTrip(p){
   const st=sim.settlements[p.home];
@@ -3188,6 +3248,8 @@ function bonus(p,what,n){
 function killPerson(p,why){
   if(p.dead)return;
   p.dead=true;
+  sim.yd=(sim.yd||0)+1;
+  if(why&&why.includes('fever'))sim.yfever=(sim.yfever||0)+1;
   passRelics(p);
   if(typeof onDeathInherit==='function')onDeathInherit(p);
   { // grief ripples through the family, in every mode
@@ -3264,27 +3326,25 @@ function updateAnimals(){
   for(const a of sim.animals){
     a.age++;
     const sp=SPECIES[a.sp];
-    if(!(sp.beast||a.legend)&&a.age>ri(3000,4600)){dead.push(a);continue}
+    if(!(sp.beast||a.legend)&&a.age>ri(3000,4600)*(sp.amph?3:1)){dead.push(a);continue}
+    if(sp.river){salmonUpdate(a,sp,dead);continue}
     if(sp.water){
-      if(chance(0.4)){
-        if(sp.river){
-          // salmon hold to the river, and run upstream when autumn comes
-          const run=curSeason()===2;
-          let bx=-1,by=-1,be=run?world.elev[idx(a.x,a.y)]:-1;
-          for(let k=0;k<8;k++){
-            const nx=a.x+DX8[k],ny=a.y+DY8[k];
-            if(!inb(nx,ny)||world.river[idx(nx,ny)]!==1)continue;
-            if(run){const e=world.elev[idx(nx,ny)];if(e>be){be=e;bx=nx;by=ny}}
-            else if(chance(0.4)){bx=nx;by=ny}
-          }
-          if(bx>=0){a.x=bx;a.y=by}
-        }else{
-          const k=ri(0,7),nx=a.x+DX8[k],ny=a.y+DY8[k];
-          if(inb(nx,ny)&&isWater(world.biome[idx(nx,ny)])){a.x=nx;a.y=ny}
-        }
+      // ocean shoals: drift, school, and scatter when the nets come near
+      let boat=null;
+      if(sim.ships&&sim.ships.length&&chance(0.3))for(const s2 of sim.ships){if(Math.abs(s2.x-a.x)<=2&&Math.abs(s2.y-a.y)<=2){boat=s2;break}}
+      if(boat){
+        a.act='scattering from the nets';a.sense='a hull shadows the water';
+        const dx=Math.sign(a.x-boat.x)||1,dy=Math.sign(a.y-boat.y);
+        const nx=a.x+dx,ny=a.y+dy;
+        if(inb(nx,ny)&&isWater(world.biome[idx(nx,ny)])){a.x=nx;a.y=ny}
+      }else if(chance(0.4)){
+        a.act='drifting with the shoal';a.sense='';
+        const k=ri(0,7),nx=a.x+DX8[k],ny=a.y+DY8[k];
+        if(inb(nx,ny)&&isWater(world.biome[idx(nx,ny)])){a.x=nx;a.y=ny}
       }
       continue;
     }
+    if(sp.amph){crocUpdate(a,sp,dead);continue}
     if(sp.beast||a.legend){updateBeast(a);continue}
     if(world.brains){
       wormAnimalUpdate(a,sp,dead);
@@ -3294,7 +3354,7 @@ function updateAnimals(){
   }
   for(const a of dead){
     const spd=SPECIES[a.sp];
-    if(!spd.water)spawnCorpse(a); // the dead remain, and the living will find them
+    if(!spd.water||spd.river)spawnCorpse(a); // the dead remain, and the living will find them; a spent salmon feeds the bank
     removeAnimal(a);
   }
   // reproduction
@@ -3303,6 +3363,7 @@ function updateAnimals(){
     for(const a of sim.animals)count[a.sp]=(count[a.sp]||0)+1;
     for(let s=0;s<SPECIES.length;s++){
       const sp=SPECIES[s],n=count[s]||0;
+      if(sp.river)continue; // salmon are born of the spawning run, nowhere else
       if(n<2)continue;
       // litters scale with headroom, so depleted populations rebound over years
       let litter=Math.min(4,Math.ceil((sp.cap-n)*0.05));
@@ -3431,6 +3492,160 @@ function stepAnimal(a,dx,dy,fleeing){
   a.fat=Math.min(1,(a.fat||0)+0.01);
   return true;
 }
+/* ---- the salmon's mind: hunger, fear, and a pull upstream that grows until it is answered ----
+   No calendar decides the run. The urge accumulates with age and the cooling water,
+   the gravel of a headwater ends it, and the run costs the fish its life. */
+function salmonUpdate(a,sp,dead){
+  if(a.genes&&!(a.genes instanceof Float32Array))a.genes=Float32Array.from(a.genes);
+  const g=a.genes||DEFG;
+  a.hun=Math.min(1,(a.hun||0)+0.006*g[1]);
+  const mature=a.age>600;
+  a.run=clamp((a.run||0)+(mature?(curSeason()===2?0.02:0.002):0)*g[2],0,1);
+  // a spent fish drifts, weakens, and feeds the river
+  if(a.spawned){
+    a.act='drifting spent in the current';
+    a.think='spent 1.0 > all else';
+    if(chance(0.12)){a._cause='died spent after the spawning run';dead.push(a)}
+    return;
+  }
+  // senses: shadows over the shallows
+  const threat=nearAnimal(a.x,a.y,2,o=>{const s=SPECIES[o.sp];return (s.pred&&!s.water)||s.amph});
+  const kin=nearAnimal(a.x,a.y,3,o=>o!==a&&o.sp===a.sp);
+  a.sense=threat?('a '+SPECIES[threat.sp].name.toLowerCase()+' looms over the water'):(a.run>0.5?'the water cools; something calls upstream':'');
+  const wFlee=threat?1.2*g[0]:0;
+  const wRun=a.run*1.0;
+  const wFeed=a.hun*0.7;
+  const wSchool=kin?0.25*g[3]:0;
+  const rank=[['flee',wFlee],['run upstream',wRun],['feed',wFeed],['school',wSchool]].sort((x,y)=>y[1]-x[1]);
+  a.think=rank.map(r=>r[0]+' '+Math.round(r[1]*100)/100).join(' > ');
+  const riverStep=(prefUp,away)=>{
+    let bx=-1,by=-1,best=-1e9;
+    for(let k=0;k<8;k++){
+      const nx=a.x+DX8[k],ny=a.y+DY8[k];
+      if(!inb(nx,ny)||world.river[idx(nx,ny)]!==1)continue;
+      let s2=rnd()*0.1;
+      if(prefUp)s2+=world.elev[idx(nx,ny)]*3;
+      if(away)s2+=Math.max(Math.abs(nx-away.x),Math.abs(ny-away.y))*0.5;
+      if(s2>best){best=s2;bx=nx;by=ny}
+    }
+    if(bx>=0){a.x=bx;a.y=by;return true}
+    return false;
+  };
+  const top=rank[0][0];
+  if(top==='flee'&&threat){a.act='darting from the '+SPECIES[threat.sp].name.toLowerCase();riverStep(false,threat);return}
+  if(top==='run upstream'){
+    a.act='running upstream against the current';
+    riverStep(true,null);
+    // the headwater: no river climbs higher from here, and the urge is full
+    let higher=false;
+    const eh=world.elev[idx(a.x,a.y)];
+    for(let k=0;k<8;k++){
+      const nx=a.x+DX8[k],ny=a.y+DY8[k];
+      if(inb(nx,ny)&&world.river[idx(nx,ny)]===1&&world.elev[idx(nx,ny)]>eh+0.001){higher=true;break}
+    }
+    if(a.run>=0.95&&!higher){
+      let n=0;for(const o of sim.animals)if(o.sp===a.sp)n++;
+      const kids=Math.min(3,Math.max(0,sp.cap-n));
+      for(let q=0;q<kids;q++){
+        const kid={id:sim.nextId++,sp:a.sp,x:a.x,y:a.y,rx:a.x,ry:a.y,age:0,path:null,pi:0,hp:1};
+        kid.genes=mutateGenes(a.genes||sp.g0||DEFG);kid.gen=(a.gen||0)+1;
+        sim.animals.push(kid);
+      }
+      a.spawned=1;a.run=0;
+      a.act='spent in the gravel of the headwater';
+    }
+    return;
+  }
+  if(top==='feed'){a.hun=Math.max(0,a.hun-0.5);a.act='feeding on the drift';if(chance(0.4))riverStep(false,null);return}
+  if(top==='school'&&kin){
+    a.act='holding with the school';
+    if(Math.max(Math.abs(kin.x-a.x),Math.abs(kin.y-a.y))>1)riverStep(false,{x:2*a.x-kin.x,y:2*a.y-kin.y});
+    return;
+  }
+  a.act='holding in the current';
+  if(chance(0.3))riverStep(false,null);
+}
+
+/* ---- the crocodile's mind: a patient ambush at the water's edge ----
+   Its hunger grows slowly and it can wait for weeks. Everything that
+   comes down to drink is prey, and sometimes that includes people. */
+function crocUpdate(a,sp,dead){
+  if(a.genes&&!(a.genes instanceof Float32Array))a.genes=Float32Array.from(a.genes);
+  const g=a.genes||DEFG;
+  if(a.sickD&&--a.sickD<0)a.sickD=0;
+  const cold=curSeason()===3||sim.weather.type==='snow';
+  const farFromSun=Math.abs(a.y-world.H/2)/(world.H/2)>0.55;
+  if(cold&&farFromSun){a.act='torpid in the mud, waiting out the cold';a.sense='';a.think='cold 1.0 > all else';return}
+  a.hun=Math.min(1,(a.hun||0)+0.004*g[1]);
+  const here=idx(a.x,a.y);
+  const inWater=isDrinkable(here);
+  const rival=nearAnimal(a.x,a.y,3,o=>o!==a&&SPECIES[o.sp].amph);
+  const prey=nearAnimal(a.x,a.y,2,o=>{const s=SPECIES[o.sp];return !s.pred&&!s.water&&!s.amph});
+  const fish=nearAnimal(a.x,a.y,1,o=>SPECIES[o.sp].river&&!o.spawned);
+  const carc=(a.hun>0.4)?nearestCorpse(a.x,a.y,3):null;
+  a.sense=prey?('a '+SPECIES[prey.sp].name.toLowerCase()+' at the water\'s edge'):rival?'another crocodile too close':(inWater?'':'the sun on old scales');
+  const wAmbush=a.hun*1.3*g[2];
+  const wBask=cold?0.9:(sim.weather.type==='rain'?0.15:0.35);
+  const wYield=(rival&&rival.age>a.age)?0.8*g[0]:0;
+  const wScav=carc?a.hun*1.1*(SP_SCAV[sp.name]||1):0;
+  const rank=[['ambush',wAmbush],['bask',wBask],['yield',wYield],['scavenge',wScav]].sort((x,y)=>y[1]-x[1]);
+  a.think=rank.map(r=>r[0]+' '+Math.round(r[1]*100)/100).join(' > ');
+  const crocStep=(dx,dy)=>{
+    const nx=a.x+(dx||0),ny=a.y+(dy||0);
+    if(!inb(nx,ny))return false;
+    const i2=idx(nx,ny);
+    const b2=world.biome[i2];
+    const watery=b2===B.LAKE||b2===B.SWAMP||!!world.river[i2];
+    if(!watery){
+      if(!passable(i2))return false;
+      let nearW=false;
+      for(let k=0;k<8;k++){const qx=nx+DX8[k],qy=ny+DY8[k];if(inb(qx,qy)&&isDrinkable(idx(qx,qy))){nearW=true;break}}
+      if(!nearW)return false; // a crocodile does not stray from the water
+    }
+    if(world.settleId[i2]>=0)return false;
+    a.x=nx;a.y=ny;return true;
+  };
+  const top=rank[0][0];
+  if(top==='yield'&&rival){a.act='driven off by a bigger crocodile';crocStep(Math.sign(a.x-rival.x)||1,Math.sign(a.y-rival.y));return}
+  if(top==='scavenge'&&carc){
+    if(Math.max(Math.abs(carc.x-a.x),Math.abs(carc.y-a.y))<=1){feedFromCorpse(a,carc)}
+    else{a.act='hauling toward carrion';crocStep(Math.sign(carc.x-a.x),Math.sign(carc.y-a.y))}
+    return;
+  }
+  if(top==='ambush'){
+    if(fish&&chance(0.4)){removeAnimal(fish);a.hun=Math.max(0,a.hun-0.35);a.act='snapping a salmon from the current';return}
+    if(prey&&chance(0.5*g[2])){
+      prey._cause='taken by a crocodile at the water\'s edge';prey._bite=4;
+      dead.push(prey);a.hun=0;
+      if(typeof noteAnimalKill==='function')noteAnimalKill(a);
+      a.act='dragging a '+SPECIES[prey.sp].name.toLowerCase()+' under';
+      return;
+    }
+    // people come to the river too; a starving, bold crocodile does not distinguish
+    if(a.hun>0.55&&chance(0.02*g[2])){
+      for(const p of sim.people.values()){
+        if(p.dead||p.inArmy)continue;
+        if(Math.abs(p.x-a.x)<=1&&Math.abs(p.y-a.y)<=1){
+          a.manKills=(a.manKills||0)+1;a.hun=0;
+          killPerson(p,'taken by a crocodile at the water\'s edge'+(p.home>=0&&sim.settlements[p.home]?' near '+sim.settlements[p.home].nm:''));
+          if(typeof noteAnimalKill==='function')noteAnimalKill(a);
+          a.act='sliding back into the water with its prize';
+          return;
+        }
+      }
+    }
+    a.act=inWater?'lying still in the shallows, only eyes above the water':'waiting motionless at the water\'s edge';
+    if(!inWater&&chance(0.3)){
+      for(let k=0;k<8;k++){const nx=a.x+DX8[k],ny=a.y+DY8[k];if(inb(nx,ny)&&isDrinkable(idx(nx,ny))){crocStep(DX8[k],DY8[k]);break}}
+    }else if(chance(0.1)){const k=ri(0,7);crocStep(DX8[k],DY8[k])}
+    return;
+  }
+  a.act='basking on the bank';
+  if(inWater&&chance(0.5)){
+    for(let k=0;k<8;k++){const nx=a.x+DX8[k],ny=a.y+DY8[k];if(inb(nx,ny)&&!isDrinkable(idx(nx,ny))&&passable(idx(nx,ny))){crocStep(DX8[k],DY8[k]);break}}
+  }
+}
+
 function instinctAnimalUpdate(a,sp,dead){
   if(a.genes&&!(a.genes instanceof Float32Array))a.genes=Float32Array.from(a.genes);
   const g=a.genes||DEFG;
@@ -4039,7 +4254,7 @@ function monthly(){
         if(!v)break;
         const ageV=(sim.day-v.born)/DAYS_Y;
         // fevers take the very young and the old first
-        if(ageV<6||ageV>50||rnd()<0.55)killPerson(v,'died of a fever in the crowded lanes of '+st.nm);
+        if(v.homeless||ageV<6||ageV>50||rnd()<0.55)killPerson(v,v.homeless?'died of a fever, homeless in the lanes of '+st.nm:'died of a fever in the crowded lanes of '+st.nm);
       }
     }
     // migration: overcrowding or famine
@@ -4059,11 +4274,13 @@ function monthly(){
             born:sim.day,fac:p.fac,home:st.id,x:st.x,y:st.y,prof:'child',
             fa:fa?fa.id:0,mo:p.id,sur:fa?fa.sur:p.sur});
           p.kids.push(kid.id);if(fa)fa.kids.push(kid.id);
+          sim.yb=(sim.yb||0)+1;
         }
       }
     }
   }
   // trade launches only where a real profit clears the road cost
+  homesMonthly();
   tradeMonthly();
   if(typeof knowledgeMonthly==='function')knowledgeMonthly();
   for(const f of sim.factions){
@@ -4225,6 +4442,7 @@ function quarterly(){
 }
 function yearly(){
   const y=curYear();
+  sim.lastYB=sim.yb||0;sim.lastYD=sim.yd||0;sim.yb=0;sim.yd=0;sim.yfever=0;
   // the forest slowly takes back what was cut, spreading in from standing trees
   {
     const W=world.W;
@@ -4445,8 +4663,13 @@ function yearly(){
         const x=edge<2?(edge?world.W-ri(2,12):ri(2,12)):ri(2,world.W-3);
         const y=edge<2?ri(2,world.H-3):(edge===2?ri(2,12):world.H-ri(2,12));
         const b=world.biome[idx(x,y)];
-        if(sp.biomes.includes(b)){
-          sim.animals.push({id:sim.nextId++,sp:s,x,y,rx:x,ry:y,age:ri(0,600),path:null,pi:0,hp:1});
+        const wet=world.river[idx(x,y)]===1||b===B.LAKE||b===B.SWAMP;
+        const hot=Math.abs(y-world.H/2)/(world.H/2)<0.45;
+        const ok=sp.river?world.river[idx(x,y)]===1:sp.amph?(wet&&hot):sp.biomes.includes(b);
+        if(ok){
+          const back={id:sim.nextId++,sp:s,x,y,rx:x,ry:y,age:ri(0,600),path:null,pi:0,hp:1};
+          if(sp.g0)back.genes=mutateGenes(sp.g0);
+          sim.animals.push(back);
           placed++;
         }
       }
@@ -4852,10 +5075,825 @@ function renderMinimap(){
 </script>
 <script>
 'use strict';
+/* ============ WORLD OBSERVATORY: a lens into the simulation, never a storyteller ============ */
+
+function obsFmt(n){return (Math.round(n)||0).toLocaleString()}
+function obsPct(a,b){return b>0?(Math.round(a/b*1000)/10)+'%':'0%'}
+function obsNum(label,val,go){
+  return '<div class="k">'+label+'</div><div class="v">'+
+    (go?'<span class="onum lnk" data-obs="'+go+'">'+val+'</span>':val)+'</div>';
+}
+function obsBack(cat){
+  return '<div class="bc"><span class="lnk" data-obs="'+cat+'||">back to '+cat.toUpperCase()+'</span></div>';
+}
+function obsSearchBox(){
+  return '<input id="obsSearch" placeholder="search the world..." value="'+esc(ui.obsQ||'')+'">';
+}
+function obsMenuRow(cat,sec,label,count){
+  return '<div class="obsL lnk" data-obs="'+cat+'|'+sec+'|">'+esc(label)+
+    (count!==undefined?' <span class="sub">'+count+'</span>':'')+'</div>';
+}
+function obsAgeY(p){return Math.floor((sim.day-p.born)/DAYS_Y)}
+function obsLivePeople(){const a=[];for(const p of sim.people.values())if(!p.dead)a.push(p);return a}
+function obsLiveSetts(){return sim.settlements.filter(s=>!s.razed)}
+function obsLiveFacs(){return sim.factions.filter(f=>!f.dead)}
+function obsWarPairs(){
+  const seen=new Set(),out=[];
+  for(const f of obsLiveFacs()){
+    for(const k in (f.wars||{})){
+      const o=sim.factions[+k];
+      if(!o||o.dead)continue;
+      const key=Math.min(f.id,o.id)+':'+Math.max(f.id,o.id);
+      if(seen.has(key))continue;
+      seen.add(key);out.push({a:f,b:o,w:f.wars[k]});
+    }
+  }
+  return out;
+}
+function obsEvline(e){
+  return '<div class="evline ev-'+e.type+' jump" data-ev="'+e.id+'"><span class="y">Y'+Math.floor(e.d/DAYS_Y)+'</span>'+esc(e.text)+'</div>';
+}
+
+/* ---------- global search ---------- */
+function obsSearch(cat){
+  const q=(ui.obsQ||'').toLowerCase();
+  let h='<h2>Search the world</h2>'+obsSearchBox();
+  if(!q)return h;
+  let hits=0;
+  const ppl=[];
+  for(const p of sim.people.values()){
+    if(p.dead)continue;
+    if((p.nm+' '+p.sur).toLowerCase().includes(q)){ppl.push(p);if(ppl.length>=8)break}
+  }
+  if(ppl.length){h+='<h3>People</h3>';for(const p of ppl)h+=L('person',p.id,fullName(p))+'<br>';hits+=ppl.length}
+  const dead=[];
+  for(const p of sim.souls.values()){
+    if(!p.notable)continue;
+    if((p.nm+' '+p.sur).toLowerCase().includes(q)){dead.push(p);if(dead.length>=4)break}
+  }
+  if(dead.length){h+='<h3>Remembered dead</h3>';for(const p of dead)h+=L('person',p.id,p.nm+' '+p.sur+' ☠')+'<br>';hits+=dead.length}
+  const setts=obsLiveSetts().filter(s=>s.nm.toLowerCase().includes(q)).slice(0,8);
+  if(setts.length){h+='<h3>Settlements</h3>';for(const s of setts)h+=L('sett',s.id,s.nm)+' <span class="sub">'+(s.popC||0)+' souls</span><br>';hits+=setts.length}
+  const facs=sim.factions.filter(f=>facTitle(f).toLowerCase().includes(q)).slice(0,6);
+  if(facs.length){h+='<h3>Realms</h3>';for(const f of facs)h+=L('fac',f.id,facTitle(f))+(f.dead?' <span class="sub">☠ fallen</span>':'')+'<br>';hits+=facs.length}
+  const rels=sim.religions.filter(r=>r.nm.toLowerCase().includes(q)).slice(0,6);
+  if(rels.length){h+='<h3>Faiths</h3>';for(const r of rels)h+=L('religion',r.id,r.nm)+'<br>';hits+=rels.length}
+  const sps=[];
+  if(typeof SPECIES!=='undefined')for(let i=0;i<SPECIES.length;i++)if(SPECIES[i]&&SPECIES[i].name.toLowerCase().includes(q))sps.push(i);
+  if(sps.length){h+='<h3>Species</h3>';for(const i of sps)h+='<span class="lnk" data-obs="life|species|'+i+'">'+esc(SPECIES[i].name)+'</span><br>';hits+=sps.length}
+  const evs=[];
+  for(let i=sim.events.length-1;i>=0&&evs.length<10;i--)if(sim.events[i].text.toLowerCase().includes(q))evs.push(sim.events[i]);
+  if(evs.length){h+='<h3>Events</h3>';for(const e of evs)h+=obsEvline(e);hits+=evs.length}
+  if(!hits)h+='<div class="sub" style="margin-top:8px">Nothing in the world answers to that name.</div>';
+  return h;
+}
+
+/* ---------- WORLD ---------- */
+function obsWorldMenu(){
+  let h='<h2>The World</h2>'+obsSearchBox();
+  if(ui.obsQ)return obsSearch('world');
+  h+=obsMenuRow('world','overview','Overview','Y'+curYear());
+  h+=obsMenuRow('world','geography','Geography',world.W+'×'+world.H+' tiles');
+  h+=obsMenuRow('world','resources','Resources','');
+  h+='<div class="sub" style="margin-top:10px;font-size:11px">The main map and the minimap are the geographic views of this world; every count below is read from the same tiles.</div>';
+  return h;
+}
+function obsOverview(){
+  const live=obsLivePeople(),setts=obsLiveSetts(),facs=obsLiveFacs();
+  let doms=0,speciesSet=new Set();
+  for(const a of sim.animals){if(a.dom!==undefined)doms++;speciesSet.add(a.sp)}
+  const cultures=new Set();for(const s of setts)cultures.add(typeof cultureOf==='function'?cultureOf(s):s.cul);
+  let markets=0,vol=0;for(const s of setts){if(s.market)markets++;if(s.trade)vol+=s.trade.vol||0}
+  const stages={};if(sim.mon)for(const k in sim.mon){const st=sim.mon[k].stage;stages[st]=(stages[st]||0)+1}
+  const curAlive=(sim.currencies||[]).filter(c=>!c.dead).length;
+  let land=0,forest=0,water=0,farm=0,grazed=0,burn=0,ruin=0;
+  for(let i=0;i<world.biome.length;i++){
+    const b=world.biome[i];
+    const isW=(b===B.DEEP||b===B.OCEAN||b===B.LAKE);
+    if(isW)water++;else land++;
+    if(b===B.FOREST||b===B.TAIGA)forest++;
+    if(world.building[i]===BUILD.FARM)farm++;
+    const c=world.cut[i];
+    if(c===5)grazed++;else if(c===3)burn++;else if(c===4)ruin++;
+  }
+  const fires=sim.fires?Object.keys(sim.fires).length:0;
+  let warsN=0;for(const f of facs)warsN+=Object.keys(f.wars||{}).length;warsN=Math.floor(warsN/2);
+  const firstEv=sim.events.length?Math.floor(sim.events[0].d/DAYS_Y):curYear();
+  let h=obsBack('world')+'<h2>'+esc(world.name)+'</h2>';
+  h+='<div class="sub">Year '+curYear()+' · '+SEASONS[curSeason()]+' · Day '+(sim.day%DAYS_Y+1)+' · seed <b>'+esc(world.seedStr)+'</b> · '+world.W+'×'+world.H+'</div>';
+  h+='<div class="obsK">Population</div><div class="kv">';
+  h+=obsNum('Humans',obsFmt(live.length),'life|people|');
+  h+=obsNum('Wild animals',obsFmt(sim.animals.length-doms),'life|animals|');
+  h+=obsNum('Domesticated',obsFmt(doms),'life|animals|');
+  h+=obsNum('Carcasses afield',obsFmt(sim.corpses.length),'life|carrion|');
+  h+=obsNum('Living species',speciesSet.size,'life|animals|');
+  h+='</div>';
+  h+='<div class="obsK">Society</div><div class="kv">';
+  h+=obsNum('Living realms',facs.length,'society|realms|');
+  h+=obsNum('Fallen realms',sim.factions.length-facs.length,'society|realms|');
+  h+=obsNum('Settlements',setts.length,'society|settlements|');
+  h+=obsNum('Cultures in use',cultures.size,'society|culture|');
+  h+=obsNum('Religions',sim.religions.length,'society|religion|');
+  h+='</div>';
+  h+='<div class="obsK">Economy</div><div class="kv">';
+  h+=obsNum('Active markets',markets,'society|economy|');
+  h+=obsNum('Money systems',Object.entries(stages).map(([k,v])=>v+' '+k).join(', ')||'none yet','society|economy|');
+  h+=obsNum('Currencies alive',curAlive,'society|economy|');
+  h+=obsNum('Goods tracked',typeof GOODS!=='undefined'?GOODS.length:0,'world|resources|');
+  h+=obsNum('Trade volume',obsFmt(vol),'society|economy|');
+  h+='</div>';
+  h+='<div class="obsK">Nature</div><div class="kv">';
+  h+=obsNum('Forest cover',obsPct(forest,land),'nature|vegetation|');
+  h+=obsNum('Surface water',obsPct(water,world.biome.length),'nature|water|');
+  h+=obsNum('Farmland tiles',obsFmt(farm),'nature|vegetation|');
+  h+=obsNum('Grazed bare',obsFmt(grazed),'nature|vegetation|');
+  h+=obsNum('Burn scars',obsFmt(burn),'nature|fire|');
+  h+=obsNum('Ruins',obsFmt(ruin),'world|geography|');
+  h+=obsNum('Active fires',fires,'nature|fire|');
+  h+=obsNum('Drought',sim.drought?'yes':'no','nature|water|');
+  h+='</div>';
+  h+='<div class="obsK">Life this year</div><div class="kv">';
+  h+=obsNum('Births',obsFmt(sim.yb||0),'life|people|');
+  h+=obsNum('Deaths',obsFmt(sim.yd||0),'life|health|');
+  h+=obsNum('Of them, fevers',obsFmt(sim.yfever||0),'life|health|');
+  h+=obsNum('Last year',obsFmt(sim.lastYB||0)+' born · '+obsFmt(sim.lastYD||0)+' died','');
+  h+='</div>';
+  h+='<div class="obsK">History</div><div class="kv">';
+  h+=obsNum('Recorded events',obsFmt(sim.events.length),'history|chronicle|');
+  h+=obsNum('Chronicle spans',(curYear()-firstEv)+' years','history|chronicle|');
+  h+=obsNum('Active wars',warsN,'society|military|');
+  h+=obsNum('Named eras',sim.eras.filter(e=>e.nm).length,'history|eras|');
+  h+='</div>';
+  return h;
+}
+function obsGeography(){
+  const counts={};let river=0,canal=0,road=0;
+  const scars=[0,0,0,0,0,0];
+  for(let i=0;i<world.biome.length;i++){
+    const b=world.biome[i];
+    counts[b]=(counts[b]||0)+1;
+    if(world.river[i]===1)river++;else if(world.river[i]===2)canal++;
+    if(world.road[i]>=ROAD_T)road++;
+    const c=world.cut[i];if(c>=1&&c<=5)scars[c]++;
+  }
+  const total=world.biome.length;
+  let h=obsBack('world')+'<h2>Geography</h2><div class="sub">'+world.W+'×'+world.H+' tiles · every row counted from the map itself</div>';
+  h+='<h3>Biomes</h3><table class="t">';
+  const order=Object.keys(counts).sort((a,b)=>counts[b]-counts[a]);
+  for(const b of order)h+='<tr><td>'+BIOME_DEF[b].name+'</td><td>'+obsFmt(counts[b])+'</td><td class="sub">'+obsPct(counts[b],total)+'</td></tr>';
+  h+='</table>';
+  h+='<h3>Ways and waters</h3><div class="kv">';
+  h+=obsNum('River tiles',obsFmt(river),'nature|water|');
+  h+=obsNum('Canal tiles',obsFmt(canal),'nature|water|');
+  h+=obsNum('Road tiles',obsFmt(road),'');
+  h+='</div>';
+  h+='<h3>Scars on the land</h3><div class="kv">';
+  h+=obsNum('Stump fields',obsFmt(scars[1]),'nature|vegetation|');
+  h+=obsNum('Dried lakebed',obsFmt(scars[2]),'nature|water|');
+  h+=obsNum('Burn scars',obsFmt(scars[3]),'nature|fire|');
+  h+=obsNum('Ruins',obsFmt(scars[4]),'');
+  h+=obsNum('Grazed bare',obsFmt(scars[5]),'nature|vegetation|');
+  h+='</div>';
+  return h;
+}
+function obsResources(){
+  let ore=0,berry=0,fishery=0,forest=0;
+  for(let i=0;i<world.biome.length;i++){
+    const r=world.resource[i];
+    if(r===RES.ORE)ore++;else if(r===RES.BERRY)berry++;else if(r===RES.FISHERY)fishery++;
+    const b=world.biome[i];
+    if((b===B.FOREST||b===B.TAIGA)&&world.cut[i]!==1)forest++;
+  }
+  const setts=obsLiveSetts();
+  let wood=0,stone=0;
+  const goodTot=new Float32Array(9);const priceSum=new Float32Array(9);let priced=0;
+  for(const s of setts){
+    if(s.stock){wood+=s.stock.wood||0;stone+=s.stock.stone||0}
+    if(s.inv)for(let g=0;g<9;g++)goodTot[g]+=s.inv[g];
+    if(s.price){priced++;for(let g=0;g<9;g++)priceSum[g]+=s.price[g]}
+  }
+  let h=obsBack('world')+'<h2>Resources</h2>';
+  h+='<h3>In the ground</h3><div class="kv">';
+  h+=obsNum('Ore veins (tiles)',obsFmt(ore),'');
+  h+=obsNum('Berry thickets',obsFmt(berry),'');
+  h+=obsNum('Rich fisheries',obsFmt(fishery),'');
+  h+=obsNum('Standing timber (tiles)',obsFmt(forest),'nature|vegetation|');
+  h+='</div>';
+  h+='<h3>In the storehouses</h3><div class="kv">';
+  h+=obsNum('Wood, all towns',obsFmt(wood),'');
+  h+=obsNum('Stone, all towns',obsFmt(stone),'');
+  h+='</div>';
+  if(typeof GOODS!=='undefined'){
+    h+='<h3>Goods across all markets</h3><table class="t"><tr><td class="sub">good</td><td class="sub">held</td><td class="sub">avg price</td></tr>';
+    for(let g=0;g<9;g++)h+='<tr><td>'+GOODS[g]+'</td><td>'+obsFmt(goodTot[g])+'</td><td>'+(priced?Math.round(priceSum[g]/priced*10)/10:0)+'</td></tr>';
+    h+='</table>';
+  }
+  return h;
+}
+
+/* ---------- LIFE ---------- */
+function obsLifeMenu(){
+  if(ui.obsQ)return obsSearch('life');
+  const live=obsLivePeople();
+  let h='<h2>Life</h2>'+obsSearchBox();
+  h+=obsMenuRow('life','people','People',obsFmt(live.length)+' souls');
+  h+=obsMenuRow('life','families','Families','');
+  h+=obsMenuRow('life','animals','Animals',obsFmt(sim.animals.length));
+  h+=obsMenuRow('life','carrion','Carrion',obsFmt(sim.corpses.length)+' carcasses');
+  h+=obsMenuRow('life','health','Health','');
+  return h;
+}
+function obsPeople(){
+  const live=obsLivePeople();
+  let m=0,f=0,kids=0,adults=0,elders=0,ageSum=0,notable=0,wealthTot=0;
+  let rich=null;const wealths=[];
+  for(const p of live){
+    const a=obsAgeY(p);ageSum+=a;
+    if(p.sex==='f')f++;else m++;
+    if(a<16)kids++;else if(a>=66)elders++;else adults++;
+    if(p.notable)notable++;
+    const w=p.wealth||0;wealthTot+=w;wealths.push(w);
+    if(!rich||w>(rich.wealth||0))rich=p;
+  }
+  wealths.sort((a,b)=>a-b);
+  const median=wealths.length?wealths[Math.floor(wealths.length/2)]:0;
+  const prof={};for(const p of live)prof[p.prof]=(prof[p.prof]||0)+1;
+  let homeless=0;for(const s of obsLiveSetts())homeless+=s.homeless||0;
+  let h=obsBack('life')+'<h2>People</h2>';
+  h+='<div class="kv">';
+  h+=obsNum('Living souls',obsFmt(live.length),'life|people-list|');
+  h+=obsNum('Women · men',obsFmt(f)+' · '+obsFmt(m),'');
+  h+=obsNum('Children under 16',obsFmt(kids),'');
+  h+=obsNum('Adults',obsFmt(adults),'');
+  h+=obsNum('Elders 66 and over',obsFmt(elders),'');
+  h+=obsNum('Average age',live.length?Math.round(ageSum/live.length):0,'');
+  h+=obsNum('Renowned',obsFmt(notable),'life|people-list|');
+  h+=obsNum('Total coin held',obsFmt(wealthTot),'');
+  h+=obsNum('Median purse',Math.round(median*10)/10,'');
+  if(rich&&(rich.wealth||0)>0)h+='<div class="k">Richest</div><div class="v">'+L('person',rich.id,fullName(rich))+' · '+obsFmt(rich.wealth)+'</div>';
+  if(homeless>0)h+=obsNum('Without a roof',obsFmt(homeless),'society|settlements|');
+  h+='</div>';
+  h+='<h3>Professions</h3><div>';
+  for(const k of Object.keys(prof).sort((a,b)=>prof[b]-prof[a]))h+='<span class="chip">'+(PROF_DEF[k]?PROF_DEF[k].name:k)+' '+prof[k]+'</span>';
+  h+='</div>';
+  h+='<div class="btnrow"><button data-obs="life|people-list|">Open the people index</button></div>';
+  return h;
+}
+function obsPeopleList(){
+  const live=obsLivePeople();
+  const sort=ui.obsSort||'renowned';
+  const sorters={
+    oldest:(a,b)=>a.born-b.born,
+    youngest:(a,b)=>b.born-a.born,
+    wealthiest:(a,b)=>(b.wealth||0)-(a.wealth||0),
+    renowned:(a,b)=>(b.dist||0)-(a.dist||0),
+    children:(a,b)=>((b.kids&&b.kids.length)||0)-((a.kids&&a.kids.length)||0),
+    skilled:(a,b)=>((b.skills&&b.skills.length)||0)-((a.skills&&a.skills.length)||0)
+  };
+  live.sort(sorters[sort]||sorters.renowned);
+  let h=obsBack('life')+'<h2>The people index</h2>';
+  h+='<div class="filters">';
+  for(const k of['renowned','oldest','youngest','wealthiest','children','skilled'])
+    h+='<button data-sort="'+k+'" class="'+(sort===k?'on':'')+'">'+k+'</button>';
+  h+='</div>';
+  h+='<table class="t"><tr><td class="sub">name</td><td class="sub">age</td><td class="sub">work</td><td class="sub">coin</td><td class="sub">home</td></tr>';
+  for(const p of live.slice(0,30)){
+    const st=p.home>=0?sim.settlements[p.home]:null;
+    h+='<tr><td>'+L('person',p.id,fullName(p))+'</td><td>'+obsAgeY(p)+'</td><td>'+(PROF_DEF[p.prof]?PROF_DEF[p.prof].name:p.prof)+'</td><td>'+Math.round(p.wealth||0)+'</td><td>'+(st&&!st.razed?L('sett',st.id,st.nm):'<span class="sub">the road</span>')+'</td></tr>';
+  }
+  h+='</table><div class="sub">'+obsFmt(live.length)+' living souls · showing 30</div>';
+  return h;
+}
+function obsFamilies(){
+  const fams=new Map();
+  for(const p of sim.people.values()){
+    if(p.dead)continue;
+    let o=fams.get(p.sur);
+    if(!o){o={n:0,w:0,homes:new Set()};fams.set(p.sur,o)}
+    o.n++;o.w+=p.wealth||0;
+    if(p.home>=0)o.homes.add(p.home);
+  }
+  const rows=[...fams.entries()].sort((a,b)=>b[1].n-a[1].n).slice(0,15);
+  let h=obsBack('life')+'<h2>Families</h2><div class="sub">'+obsFmt(fams.size)+' living family names</div>';
+  h+='<table class="t"><tr><td class="sub">house</td><td class="sub">living</td><td class="sub">coin</td><td class="sub">seats</td></tr>';
+  for(const[sur,o]of rows){
+    const homes=[...o.homes].slice(0,2).map(id=>{const s=sim.settlements[id];return s&&!s.razed?L('sett',id,s.nm):''}).filter(Boolean).join(', ');
+    h+='<tr><td>'+esc(sur)+'</td><td>'+o.n+'</td><td>'+obsFmt(o.w)+'</td><td>'+(homes||'<span class="sub">scattered</span>')+'</td></tr>';
+  }
+  h+='</table>';
+  return h;
+}
+function obsAnimals(){
+  const by=new Map();
+  for(const a of sim.animals){
+    let o=by.get(a.sp);
+    if(!o){o={n:0,dom:0,age:0,gen:0};by.set(a.sp,o)}
+    o.n++;if(a.dom!==undefined)o.dom++;o.age+=a.age||0;o.gen=Math.max(o.gen,a.gen||0);
+  }
+  let h=obsBack('life')+'<h2>Animals</h2><div class="sub">'+obsFmt(sim.animals.length)+' living creatures · click a species</div>';
+  h+='<table class="t"><tr><td class="sub">species</td><td class="sub">pop</td><td class="sub">tame</td><td class="sub">avg age</td><td class="sub">gen</td></tr>';
+  const rows=[...by.entries()].sort((a,b)=>b[1].n-a[1].n);
+  for(const[sp,o]of rows){
+    h+='<tr><td><span class="lnk" data-obs="life|species|'+sp+'">'+esc(SPECIES[sp].name)+'</span></td><td>'+o.n+'</td><td>'+(o.dom||'')+'</td><td>'+(Math.round(o.age/o.n/DAYS_Y*10)/10)+'y</td><td>'+o.gen+'</td></tr>';
+  }
+  h+='</table>';
+  const wet=rows.filter(([sp])=>SPECIES[sp].water||SPECIES[sp].river);
+  if(wet.length)h+='<div class="sub" style="font-size:11px">Shoals and salmon live in the waters; salmon run the rivers in autumn.</div>';
+  return h;
+}
+function obsSpecies(){
+  const sp=+(ui.obsArg||0);
+  const def=SPECIES[sp];
+  if(!def)return obsBack('life')+'<div class="sub">No such species walks this world.</div>';
+  const mine=sim.animals.filter(a=>a.sp===sp);
+  let h=obsBack('life')+'<h2>'+esc(def.name)+'</h2>';
+  const flags=[];
+  if(def.dangerous)flags.push('dangerous');
+  if(def.dom)flags.push('domesticable');
+  if(def.water)flags.push('water-bound');
+  if(def.river)flags.push('river-run');
+  h+='<div class="sub">'+(flags.join(' · ')||'wild land animal')+'</div>';
+  if(!mine.length){
+    h+='<div class="sub" style="margin-top:8px">None living. The land remembers them only in the chronicle.</div>';
+    return h;
+  }
+  let dom=0,ageSum=0,gmin=99,gmax=0;const gsum=[0,0,0,0];let gn=0;
+  const bio={};
+  for(const a of mine){
+    if(a.dom!==undefined)dom++;
+    ageSum+=a.age||0;
+    gmin=Math.min(gmin,a.gen||0);gmax=Math.max(gmax,a.gen||0);
+    if(a.genes){gn++;for(let t=0;t<4;t++)gsum[t]+=a.genes[t]}
+    const b=BIOME_DEF[world.biome[idx(a.x,a.y)]].name;bio[b]=(bio[b]||0)+1;
+  }
+  h+='<div class="kv">';
+  h+=obsNum('Population',obsFmt(mine.length),'');
+  h+=obsNum('Wild · tame',(mine.length-dom)+' · '+dom,'');
+  h+=obsNum('Average age',(Math.round(ageSum/mine.length/DAYS_Y*10)/10)+' years','');
+  h+=obsNum('Generations',gmin+' to '+gmax,'');
+  h+='</div>';
+  if(gn){
+    const L4=world.brains
+      ?['Threat sense','Food sense','Escape circuit','Forward drive']
+      :['Wariness','Appetite','Boldness','Herd instinct'];
+    h+='<h3>Lineage drift</h3><div class="kv">';
+    for(let t=0;t<4;t++){
+      const pct=Math.round((gsum[t]/gn-1)*100);
+      h+='<div class="k">'+L4[t]+'</div><div class="v">'+(pct>0?'+':'')+pct+'% vs founder stock</div>';
+    }
+    h+='</div><div class="sub" style="font-size:11px">averaged over '+gn+' living genomes, mutated each birth, culled by the world</div>';
+  }
+  h+='<h3>Where they range</h3><div>';
+  for(const[b,n]of Object.entries(bio).sort((a,b)=>b[1]-a[1]).slice(0,5))h+='<span class="chip">'+esc(b)+' '+n+'</span>';
+  h+='</div>';
+  const corp=sim.corpses.filter(c=>c.sp===sp).length;
+  if(corp)h+='<div class="kv"><div class="k">Carcasses afield</div><div class="v"><span class="onum lnk" data-obs="life|carrion|">'+corp+'</span></div></div>';
+  if(typeof SP_SCAV!=='undefined'&&SP_SCAV[def.name]!==undefined)
+    h+='<div class="kv"><div class="k">Scavenger stomach</div><div class="v">'+SP_SCAV[def.name]+' (higher dares fouler meat)</div></div>';
+  return h;
+}
+function obsCarrion(){
+  const stages={},bySp={};let mass=0;
+  for(const c of sim.corpses){
+    const s=corpseStage(c);stages[s]=(stages[s]||0)+1;
+    const nm=SPECIES[c.sp]?SPECIES[c.sp].name:'?';bySp[nm]=(bySp[nm]||0)+1;
+    mass+=Math.max(0,c.mass||0);
+  }
+  let h=obsBack('life')+'<h2>Carrion</h2><div class="sub">'+obsFmt(sim.corpses.length)+' carcasses on the ground · '+obsFmt(mass)+' meat left in them</div>';
+  h+='<h3>By decay</h3><div>';
+  for(const s of['fresh','ripe','rotten','bones'])if(stages[s])h+='<span class="chip">'+s+' '+stages[s]+'</span>';
+  h+='</div>';
+  h+='<h3>By species</h3><div>';
+  for(const[nm,n]of Object.entries(bySp).sort((a,b)=>b[1]-a[1]).slice(0,8))h+='<span class="chip">'+esc(nm)+' '+n+'</span>';
+  h+='</div>';
+  h+='<div class="sub" style="font-size:11px;margin-top:8px">Cold preserves, summer ripens; what no scavenger takes feeds the soil.</div>';
+  return h;
+}
+function obsHealth(){
+  const setts=obsLiveSetts();
+  const plagued=setts.filter(s=>s.plague);
+  const famined=setts.filter(s=>s.famine>25);
+  let sick=0;for(const a of sim.animals)if((a.sickD||0)>0)sick++;
+  let h=obsBack('life')+'<h2>Health</h2>';
+  h+='<div class="kv">';
+  h+=obsNum('Deaths this year',obsFmt(sim.yd||0),'');
+  h+=obsNum('Of them, fevers',obsFmt(sim.yfever||0),'');
+  h+=obsNum('Towns under plague',plagued.length,'');
+  h+=obsNum('Towns in famine',famined.length,'');
+  h+=obsNum('Sick animals',sick,'');
+  h+='</div>';
+  if(plagued.length){h+='<h3>Plague rages in</h3>';for(const s of plagued)h+=L('sett',s.id,s.nm)+'<br>'}
+  if(famined.length){h+='<h3>Hunger stalks</h3>';for(const s of famined)h+=L('sett',s.id,s.nm)+' <span class="sub">famine '+Math.round(s.famine)+'</span><br>'}
+  return h;
+}
+
+/* ---------- SOCIETY ---------- */
+function obsSocietyMenu(){
+  if(ui.obsQ)return obsSearch('society');
+  const facs=obsLiveFacs();
+  let h='<h2>Society</h2>'+obsSearchBox();
+  h+=obsMenuRow('society','settlements','Settlements',obsLiveSetts().length);
+  h+=obsMenuRow('society','realms','Realms',facs.length+' living');
+  h+=obsMenuRow('society','economy','Economy','');
+  h+=obsMenuRow('society','technology','Technology','');
+  h+=obsMenuRow('society','religion','Religion',sim.religions.length);
+  h+=obsMenuRow('society','military','Military',obsWarPairs().length+' wars');
+  h+=obsMenuRow('society','culture','Culture','');
+  return h;
+}
+function obsSettlements(){
+  const setts=obsLiveSetts();
+  const sort=ui.obsSort||'largest';
+  const sorters={
+    largest:(a,b)=>(b.popC||0)-(a.popC||0),
+    wealthiest:(a,b)=>(b.wealth||0)-(a.wealth||0),
+    hungriest:(a,b)=>{
+      const fa=typeof foodTotal==='function'?foodTotal(a)/Math.max(1,a.popC||1):0;
+      const fb=typeof foodTotal==='function'?foodTotal(b)/Math.max(1,b.popC||1):0;
+      return fa-fb},
+    oldest:(a,b)=>a.founded-b.founded
+  };
+  setts.sort(sorters[sort]||sorters.largest);
+  let anyHomeless=false;for(const s of setts)if(s.homeless)anyHomeless=true;
+  let h=obsBack('society')+'<h2>Settlements</h2>';
+  h+='<div class="filters">';
+  for(const k of['largest','wealthiest','hungriest','oldest'])h+='<button data-sort="'+k+'" class="'+(sort===k?'on':'')+'">'+k+'</button>';
+  h+='</div>';
+  h+='<table class="t"><tr><td class="sub">town</td><td class="sub">souls</td><td class="sub">coin</td><td class="sub">food</td>'+(anyHomeless?'<td class="sub">roofless</td>':'')+'<td class="sub">realm</td></tr>';
+  for(const s of setts.slice(0,25)){
+    const f=sim.factions[s.fac];
+    h+='<tr><td>'+L('sett',s.id,s.nm)+'</td><td>'+(s.popC||0)+'</td><td>'+Math.round(s.wealth||0)+'</td><td>'+(typeof foodTotal==='function'?Math.round(foodTotal(s)):0)+'</td>'+
+      (anyHomeless?'<td>'+(s.homeless||'')+'</td>':'')+
+      '<td>'+(f?L('fac',f.id,facTitle(f)):'')+'</td></tr>';
+  }
+  h+='</table><div class="sub">'+setts.length+' living settlements · showing 25</div>';
+  return h;
+}
+function obsEconomy(){
+  const facs=obsLiveFacs();
+  let h=obsBack('society')+'<h2>Economy</h2>';
+  h+='<h3>Money, realm by realm</h3><table class="t"><tr><td class="sub">realm</td><td class="sub">stage</td><td class="sub">medium</td><td class="sub">treasury</td></tr>';
+  for(const f of facs){
+    const m=sim.mon?sim.mon[f.id]:null;
+    let med='';
+    if(m){
+      if(m.stage==='commodity'&&m.medium>=0)med=GOODS[m.medium];
+      else if(m.stage==='coin'){
+        const c=(sim.currencies||[])[m.curId];
+        if(c)med='the '+c.nm+' · '+Math.round(c.purity*100)+'% fine';
+      }
+    }
+    h+='<tr><td>'+L('fac',f.id,facTitle(f))+'</td><td>'+(m?m.stage:'none')+'</td><td>'+esc(med)+'</td><td>'+obsFmt(f.treasury||0)+(f.unpaid?' <span style="color:#c66">unpaid</span>':'')+'</td></tr>';
+  }
+  h+='</table>';
+  if((sim.currencies||[]).length){
+    h+='<h3>Every coin ever struck</h3><table class="t"><tr><td class="sub">coin</td><td class="sub">issuer</td><td class="sub">fineness</td><td class="sub">struck</td><td class="sub">state</td></tr>';
+    for(const c of sim.currencies){
+      const iss=sim.factions[c.issuer];
+      h+='<tr><td>'+esc(c.nm)+'</td><td>'+(iss?L('fac',iss.id,facTitle(iss)):'')+'</td><td>'+Math.round(c.purity*100)+'%</td><td>Y'+Math.floor((c.born||0)/DAYS_Y)+'</td><td>'+(c.dead?'dead metal':c.orphan?'orphaned':'circulating')+'</td></tr>';
+    }
+    h+='</table>';
+  }
+  const setts=obsLiveSetts();
+  if(typeof GOODS!=='undefined'){
+    const tot=new Float32Array(9),ps=new Float32Array(9);let priced=0;
+    const holder=new Array(9).fill(null);
+    for(const s of setts){
+      if(s.inv)for(let g=0;g<9;g++){tot[g]+=s.inv[g];if(!holder[g]||s.inv[g]>holder[g].inv[g])holder[g]=s}
+      if(s.price){priced++;for(let g=0;g<9;g++)ps[g]+=s.price[g]}
+    }
+    h+='<h3>Goods</h3><table class="t"><tr><td class="sub">good</td><td class="sub">held</td><td class="sub">price</td><td class="sub">deepest store</td></tr>';
+    for(let g=0;g<9;g++)h+='<tr><td>'+GOODS[g]+'</td><td>'+obsFmt(tot[g])+'</td><td>'+(priced?Math.round(ps[g]/priced*10)/10:0)+'</td><td>'+(holder[g]?L('sett',holder[g].id,holder[g].nm):'')+'</td></tr>';
+    h+='</table>';
+  }
+  let vol=0,top=null;
+  for(const s of setts){const v=s.trade?s.trade.vol||0:0;vol+=v;if(!top||v>(top.trade?top.trade.vol:0))top=s}
+  const tships=(sim.ships||[]).filter(s=>s.kind==='trade').length;
+  h+='<h3>Trade</h3><div class="kv">';
+  h+=obsNum('Trade volume, all markets',obsFmt(vol),'');
+  h+=obsNum('Caravans on the road',(sim.caravans||[]).length,'');
+  h+=obsNum('Trade ships at sea',tships,'');
+  if(top&&top.trade&&top.trade.vol>0)h+='<div class="k">Busiest market</div><div class="v">'+L('sett',top.id,top.nm)+'</div>';
+  h+='</div>';
+  return h;
+}
+function obsTechnology(){
+  const facs=obsLiveFacs();
+  const knowers={};
+  for(const k in KNOW)knowers[k]=0;
+  for(const p of sim.people.values())if(!p.dead&&p.skills)for(const s of p.skills)if(knowers[s]!==undefined)knowers[s]++;
+  const holders={};
+  for(const f of facs)for(const e of (typeof facKnownList==='function'?facKnownList(f):[]))
+    (holders[e.k]=holders[e.k]||[]).push(f);
+  let h=obsBack('society')+'<h2>Technology</h2><div class="sub">every technique lives only in the minds that hold it</div>';
+  h+='<table class="t"><tr><td class="sub">technique</td><td class="sub">living masters</td><td class="sub">held by</td></tr>';
+  for(const k in KNOW){
+    const hs=(holders[k]||[]).map(f=>L('fac',f.id,facTitle(f))).join(', ');
+    h+='<tr><td>'+k+'</td><td>'+knowers[k]+'</td><td>'+(knowers[k]?hs||'<span class="sub">wanderers only</span>':'<span class="sub">lost to all</span>')+'</td></tr>';
+  }
+  h+='</table>';
+  const evs=[];
+  for(let i=sim.events.length-1;i>=0&&evs.length<12;i--)if(sim.events[i].type==='tech')evs.push(sim.events[i]);
+  if(evs.length){h+='<h3>Recent discoveries and losses</h3>';for(const e of evs)h+=obsEvline(e)}
+  h+='<div class="sub" style="font-size:11px;margin-top:6px">Open any card: it records the real pressure that ripened the discovery.</div>';
+  return h;
+}
+function obsReligion(){
+  let h=obsBack('society')+'<h2>Religion</h2>';
+  if(!sim.religions.length)return h+'<div class="sub">No faith has yet been born.</div>';
+  h+='<table class="t"><tr><td class="sub">faith</td><td class="sub">faithful</td><td class="sub">towns</td><td class="sub">founded</td><td class="sub">prophet</td></tr>';
+  for(const r of sim.religions){
+    const follows=obsLiveSetts().filter(s=>s.religion===r.id);
+    let pop=0;for(const s of follows)pop+=s.popC||0;
+    const founder=getP(r.founder);
+    h+='<tr><td>'+L('religion',r.id,r.nm)+'</td><td>'+obsFmt(pop)+'</td><td>'+follows.length+'</td><td>Y'+Math.floor(r.founded/DAYS_Y)+'</td><td>'+(founder?L('person',r.founder,founder.nm+' '+founder.sur+(founder.dead?' ☠':'')):'')+'</td></tr>';
+  }
+  h+='</table>';
+  return h;
+}
+function obsMilitary(){
+  const pairs=obsWarPairs();
+  let h=obsBack('society')+'<h2>Military</h2>';
+  if(!pairs.length)h+='<div class="sub">The realms are at peace, for now.</div>';
+  else{
+    h+='<h3>Active wars</h3>';
+    for(const{a,b,w}of pairs){
+      h+='<div style="margin:6px 0;padding:6px 8px;border:1px solid var(--line);border-radius:2px">';
+      h+=L('fac',a.id,facTitle(a))+' <span style="color:var(--crim)">⚔</span> '+L('fac',b.id,facTitle(b));
+      if(w&&w.since!==undefined)h+=' <span class="sub">since Y'+Math.floor(w.since/DAYS_Y)+'</span>';
+      if(w&&w.reason)h+='<div class="sub" style="font-size:11px">'+esc(w.reason)+'</div>';
+      h+='</div>';
+    }
+  }
+  const armies=(sim.armies||[]).filter(x=>!x.dead);
+  if(armies.length){
+    h+='<h3>Hosts in the field</h3><table class="t"><tr><td class="sub">realm</td><td class="sub">warriors</td><td class="sub">orders</td><td class="sub">grain</td></tr>';
+    for(const x of armies){
+      const f=sim.factions[x.fac];
+      h+='<tr><td>'+(f?L('fac',f.id,facTitle(f)):'')+'</td><td>'+x.str+'</td><td>'+x.state+'</td><td>'+Math.round(x.sup||0)+'</td></tr>';
+    }
+    h+='</table><div class="sub" style="font-size:11px">an army with an empty wagon and empty purse bleeds deserters</div>';
+  }
+  return h;
+}
+function obsCulture(){
+  const used=new Map();
+  for(const f of obsLiveFacs()){
+    let o=used.get(f.culture);if(!o){o={facs:[],setts:0};used.set(f.culture,o)}
+    o.facs.push(f);
+  }
+  for(const s of obsLiveSetts()){
+    const c=typeof cultureOf==='function'?cultureOf(s):s.cul;
+    let o=used.get(c);if(!o){o={facs:[],setts:0};used.set(c,o)}
+    o.setts++;
+  }
+  let h=obsBack('society')+'<h2>Culture</h2><div class="sub">tongues drift apart where the roads fall silent</div>';
+  h+='<table class="t"><tr><td class="sub">tongue</td><td class="sub">realms</td><td class="sub">towns</td></tr>';
+  for(const[ci,o]of used){
+    const cu=CULTURES[ci];
+    if(!cu)continue;
+    h+='<tr><td>'+esc(cu.adj)+'</td><td>'+(o.facs.map(f=>L('fac',f.id,facTitle(f))).join(', ')||'<span class="sub">none</span>')+'</td><td>'+o.setts+'</td></tr>';
+  }
+  h+='</table>';
+  const forks=[];
+  for(let i=sim.events.length-1;i>=0&&forks.length<6;i--)if(sim.events[i].text.includes('tongue of its own'))forks.push(sim.events[i]);
+  if(forks.length){h+='<h3>New tongues</h3>';for(const e of forks)h+=obsEvline(e)}
+  return h;
+}
+
+/* ---------- NATURE ---------- */
+function obsNatureMenu(){
+  if(ui.obsQ)return obsSearch('nature');
+  const fires=sim.fires?Object.keys(sim.fires).length:0;
+  let h='<h2>Nature</h2>'+obsSearchBox();
+  h+=obsMenuRow('nature','vegetation','Vegetation','');
+  h+=obsMenuRow('nature','water','Water',sim.drought?'drought':'');
+  h+=obsMenuRow('nature','fire','Fire',fires?fires+' burning':'');
+  h+=obsMenuRow('nature','wildlife','Wildlife',obsFmt(sim.animals.length));
+  h+=obsMenuRow('nature','foodweb','The food web','');
+  return h;
+}
+function obsVegetation(){
+  let forest=0,land=0,stump=0,grazed=0,burn=0,farm=0,berry=0;
+  for(let i=0;i<world.biome.length;i++){
+    const b=world.biome[i];
+    if(!(b===B.DEEP||b===B.OCEAN||b===B.LAKE))land++;
+    if(b===B.FOREST||b===B.TAIGA)forest++;
+    const c=world.cut[i];
+    if(c===1)stump++;else if(c===5)grazed++;else if(c===3)burn++;
+    if(world.building[i]===BUILD.FARM)farm++;
+    if(world.resource[i]===RES.BERRY)berry++;
+  }
+  let h=obsBack('nature')+'<h2>Vegetation</h2>';
+  h+='<div class="kv">';
+  h+=obsNum('Standing forest',obsFmt(forest)+' tiles · '+obsPct(forest,land)+' of land','');
+  h+=obsNum('Stump fields',obsFmt(stump),'');
+  h+=obsNum('Grazed bare',obsFmt(grazed),'');
+  h+=obsNum('Burn scars',obsFmt(burn),'');
+  h+=obsNum('Farmland',obsFmt(farm),'');
+  h+=obsNum('Berry thickets',obsFmt(berry),'');
+  h+='</div>';
+  h+='<div class="sub" style="font-size:11px;margin-top:6px">Felled trees really leave the map and grow back from standing edges; grazed grass returns at the pace of the local moisture.</div>';
+  return h;
+}
+function obsWater(){
+  let river=0,canal=0,lake=0,dried=0;
+  for(let i=0;i<world.biome.length;i++){
+    if(world.river[i]===1)river++;else if(world.river[i]===2)canal++;
+    if(world.biome[i]===B.LAKE)lake++;
+    if(world.cut[i]===2)dried++;
+  }
+  let h=obsBack('nature')+'<h2>Water</h2>';
+  h+='<div class="kv">';
+  h+=obsNum('River tiles',obsFmt(river),'');
+  h+=obsNum('Canals dug',obsFmt(canal),'');
+  h+=obsNum('Lake tiles',obsFmt(lake),'');
+  h+=obsNum('Dried lakebed',obsFmt(dried),'');
+  h+=obsNum('Drought',sim.drought?'yes':'no','');
+  h+=obsNum('Sky right now',sim.weather?sim.weather.type:'','');
+  h+='</div>';
+  h+='<div class="sub" style="font-size:11px;margin-top:6px">Thirsty towns drain their lake edges; kind years refill the shore. Salmon run the rivers.</div>';
+  return h;
+}
+function obsFire(){
+  const keys=sim.fires?Object.keys(sim.fires):[];
+  let burn=0;for(let i=0;i<world.cut.length;i++)if(world.cut[i]===3)burn++;
+  let h=obsBack('nature')+'<h2>Fire</h2>';
+  h+='<div class="kv">';
+  h+=obsNum('Fires burning now',keys.length,'');
+  h+=obsNum('Burn scars on the land',obsFmt(burn),'');
+  h+='</div>';
+  if(keys.length){
+    h+='<h3>Where it burns</h3>';
+    for(const k of keys.slice(0,6)){
+      const i=+k,x=i%world.W,y=(i/world.W)|0;
+      h+='<span class="lnk" data-j="'+x+','+y+'">🔥 '+x+', '+y+'</span><br>';
+    }
+  }
+  return h;
+}
+function obsWildlife(){
+  let preds=0,grazers=0;
+  for(const a of sim.animals){
+    const d=SPECIES[a.sp];
+    if(d.water||d.river)continue;
+    if(d.dangerous||d.name==='Wolf'||d.name==='Fox')preds++;else grazers++;
+  }
+  let h=obsBack('nature')+'<h2>Wildlife</h2>';
+  h+='<div class="kv">';
+  h+=obsNum('Hunters',obsFmt(preds),'life|animals|');
+  h+=obsNum('Grazers',obsFmt(grazers),'life|animals|');
+  h+=obsNum('Grazers per hunter',preds?Math.round(grazers/preds*10)/10:'no hunters left','');
+  h+='</div>';
+  h+='<div class="btnrow"><button data-obs="life|animals|">Open the species index</button></div>';
+  return h;
+}
+function obsFoodweb(){
+  const present=new Set();
+  for(const a of sim.animals)present.add(SPECIES[a.sp].name);
+  const grazers=[],hunters=[];
+  for(let i=0;i<SPECIES.length;i++){
+    const d=SPECIES[i];if(!d||!present.has(d.name)||d.water||d.river)continue;
+    if(d.dangerous||d.name==='Wolf'||d.name==='Fox')hunters.push(d.name);else grazers.push(d.name);
+  }
+  const scavs=[];
+  if(typeof SP_SCAV!=='undefined')
+    for(const nm of Object.keys(SP_SCAV))if(present.has(nm))scavs.push([nm,SP_SCAV[nm]]);
+  scavs.sort((a,b)=>b[1]-a[1]);
+  let h=obsBack('nature')+'<h2>The food web</h2><div class="sub">read from the living mechanics, not a diagram on file</div>';
+  h+='<div class="kv">';
+  h+='<div class="k">Grass</div><div class="v">grazed bare tile by tile, regrown by moisture</div>';
+  h+='<div class="k">Grazers</div><div class="v">'+(grazers.join(', ')||'none living')+'</div>';
+  h+='<div class="k">Hunters</div><div class="v">'+(hunters.join(', ')||'none living')+' · hunt only when hungry</div>';
+  h+='<div class="k">Carcasses</div><div class="v">'+obsFmt(sim.corpses.length)+' afield · <span class="onum lnk" data-obs="life|carrion|">carrion</span></div>';
+  h+='<div class="k">Scavengers</div><div class="v">'+(scavs.map(s=>s[0]).join(' → ')||'none')+' · in order of what their stomachs bear</div>';
+  h+='<div class="k">Soil</div><div class="v">a carcass fully decayed feeds the ground beneath it</div>';
+  if(present.has('Salmon')&&present.has('Bear'))h+='<div class="k">The shallows</div><div class="v">bears take salmon at the river edge</div>';
+  h+='</div>';
+  return h;
+}
+
+/* ---------- HISTORY ---------- */
+function obsHistoryMenu(){
+  if(ui.obsQ)return obsSearch('history');
+  let h='<h2>History</h2>'+obsSearchBox();
+  h+=obsMenuRow('history','chronicle','The chronicle',obsFmt(sim.events.length)+' events');
+  h+=obsMenuRow('history','eras','Eras',sim.eras.filter(e=>e.nm).length);
+  h+=obsMenuRow('history','statistics','Statistics','');
+  h+=obsMenuRow('history','wars','Wars','');
+  h+=obsMenuRow('history','migration','Migration and foundings','');
+  h+=obsMenuRow('history','causality','Causality','the why browser');
+  return h;
+}
+function obsEras(){
+  let h=obsBack('history')+'<h2>Eras</h2>';
+  const named=sim.eras.filter(e=>e.nm);
+  if(!named.length)return h+'<div class="sub">History has not yet earned a name for itself.</div>';
+  for(const e of named)h+='<div class="evline"><span class="y">Y'+e.from+'–'+(e.to!==undefined?e.to:'now')+'</span><b>'+esc(e.nm)+'</b></div>';
+  return h;
+}
+function obsWars(){
+  let h=obsBack('history')+'<h2>Wars</h2>';
+  const evs=[];
+  for(let i=sim.events.length-1;i>=0&&evs.length<60;i--){
+    const e=sim.events[i];
+    if(e.type==='war'||e.type==='battle')evs.push(e);
+  }
+  if(!evs.length)return h+'<div class="sub">No blood in the chronicle yet.</div>';
+  for(const e of evs)h+=obsEvline(e);
+  return h;
+}
+function obsMigration(){
+  let h=obsBack('history')+'<h2>Migration and foundings</h2>';
+  const evs=[];
+  for(let i=sim.events.length-1;i>=0&&evs.length<30;i--){
+    const e=sim.events[i];
+    if(e.type==='found'||e.text.includes('founded')||e.text.includes('migrants'))evs.push(e);
+  }
+  if(!evs.length)return h+'<div class="sub">No one has yet left home.</div>';
+  for(const e of evs)h+=obsEvline(e);
+  return h;
+}
+function obsCausality(){
+  let h=obsBack('history')+'<h2>Causality</h2>';
+  h+='<div class="sub">Every event links its cause to its consequences; the cards below also carry the measured decision weights behind the act. Click one and keep clicking why.</div>';
+  const evs=[];
+  for(let i=sim.events.length-1;i>=0&&evs.length<25;i--)if(sim.events[i].why)evs.push(sim.events[i]);
+  if(!evs.length)return h+'<div class="sub" style="margin-top:8px">No weighed decisions recorded yet.</div>';
+  for(const e of evs){
+    h+=obsEvline(e);
+    h+='<div style="margin:0 0 6px 2px">';
+    for(const k of Object.keys(e.why))h+='<span class="chip" style="font-size:10px">'+esc(k)+'</span>';
+    h+='</div>';
+  }
+  return h;
+}
+
+/* ---------- dispatch ---------- */
+function renderObservatory(cat){
+  const sec=ui.obsSec;
+  try{
+    if(cat==='world'){
+      if(!sec)return obsWorldMenu();
+      if(sec==='overview')return obsOverview();
+      if(sec==='geography')return obsGeography();
+      if(sec==='resources')return obsResources();
+      return obsWorldMenu();
+    }
+    if(cat==='life'){
+      if(!sec)return obsLifeMenu();
+      if(sec==='people')return obsPeople();
+      if(sec==='people-list')return obsPeopleList();
+      if(sec==='families')return obsFamilies();
+      if(sec==='animals')return obsAnimals();
+      if(sec==='species')return obsSpecies();
+      if(sec==='carrion')return obsCarrion();
+      if(sec==='health')return obsHealth();
+      return obsLifeMenu();
+    }
+    if(cat==='society'){
+      if(!sec)return obsSocietyMenu();
+      if(sec==='settlements')return obsSettlements();
+      if(sec==='realms')return obsBack('society')+renderRealms();
+      if(sec==='economy')return obsEconomy();
+      if(sec==='technology')return obsTechnology();
+      if(sec==='religion')return obsReligion();
+      if(sec==='military')return obsMilitary();
+      if(sec==='culture')return obsCulture();
+      return obsSocietyMenu();
+    }
+    if(cat==='nature'){
+      if(!sec)return obsNatureMenu();
+      if(sec==='vegetation')return obsVegetation();
+      if(sec==='water')return obsWater();
+      if(sec==='fire')return obsFire();
+      if(sec==='wildlife')return obsWildlife();
+      if(sec==='foodweb')return obsFoodweb();
+      return obsNatureMenu();
+    }
+    if(cat==='history'){
+      if(!sec)return obsHistoryMenu();
+      if(sec==='chronicle')return obsBack('history')+renderChronicle();
+      if(sec==='eras')return obsEras();
+      if(sec==='statistics')return obsBack('history')+renderStats();
+      if(sec==='wars')return obsWars();
+      if(sec==='migration')return obsMigration();
+      if(sec==='causality')return obsCausality();
+      return obsHistoryMenu();
+    }
+  }catch(err){
+    return '<div class="sub">The observatory lens clouded: '+esc(err.message)+'</div>';
+  }
+  return obsWorldMenu();
+}
+</script>
+<script>
+'use strict';
 /* ============ UI ============ */
 let booting=true;
 const ui={
   tab:'inspect',labels:true,showRoads:true,histFilter:'all',histSearch:'',
+  obsSec:null,obsArg:null,obsSort:'renowned',obsQ:'',trail:[],
   _refresh:0,_lastEvCount:0,
   tick(ev){
     if(booting)return;
@@ -4886,18 +5924,53 @@ const ui={
   renderPanel(force){
     const pb=$('#panelbody');
     if($('#side').classList.contains('hidden'))return;
+    // never yank the ground out from under a typing observer
+    if(!force&&document.activeElement&&(document.activeElement.id==='obsSearch'||document.activeElement.id==='histsearch'))return;
     const st=pb.scrollTop;
-    if(this.tab==='inspect')pb.innerHTML=renderInspect();
-    else if(this.tab==='realms')pb.innerHTML=renderRealms();
-    else if(this.tab==='chronicle'){
-      if(force||sim.events.length!==this._lastEvCount){pb.innerHTML=renderChronicle();this._lastEvCount=sim.events.length}
-      else return;
+    if(this.tab==='inspect')pb.innerHTML=trailHtml()+renderInspect();
+    else if(this.tab==='world'||this.tab==='life'||this.tab==='society'||this.tab==='nature'||this.tab==='history'){
+      if(this.tab==='history'&&(this.obsSec===null||this.obsSec==='chronicle')&&!force&&sim.events.length===this._lastEvCount&&!this.obsQ)return;
+      pb.innerHTML=renderObservatory(this.tab);
+      this._lastEvCount=sim.events.length;
+      if(this.tab==='history'&&this.obsSec==='statistics')drawCharts();
     }
-    else if(this.tab==='stats'){pb.innerHTML=renderStats();drawCharts()}
     pb.scrollTop=st;
   }
 };
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')}
+/* the observer's descent, world down to one soul, retraceable step by step */
+function selLabel(s){
+  if(!s)return null;
+  try{
+    if(s.type==='person'){const p=getP(s.id);return p?p.nm+' '+p.sur:null}
+    if(s.type==='sett'){const t=sim.settlements[s.id];return t?t.nm:null}
+    if(s.type==='fac'){const f=sim.factions[s.id];return f?facTitle(f):null}
+    if(s.type==='religion'){const r=sim.religions[s.id];return r?r.nm:null}
+    if(s.type==='animal'){const a=sim.animals.find(x=>x.id===s.id);return a?SPECIES[a.sp].name:null}
+    if(s.type==='army')return 'a host';
+    if(s.type==='corpse')return 'a carcass';
+    if(s.type==='relic'){const r=sim.relics[s.id];return r?r.nm:null}
+    if(s.type==='tile')return s.x+','+s.y;
+  }catch(e){}
+  return null;
+}
+function trailPush(sel2){
+  const lb=selLabel(sel2);
+  if(!lb)return;
+  const t=ui.trail;
+  if(t.length&&t[t.length-1].type===sel2.type&&t[t.length-1].id===sel2.id)return;
+  t.push({type:sel2.type,id:sel2.id,x:sel2.x,y:sel2.y,lb});
+  if(t.length>8)t.shift();
+}
+function trailHtml(){
+  if(!ui.trail.length)return '';
+  let h='<div class="bc"><span class="lnk" data-obs="world||">World</span>';
+  for(let i=0;i<ui.trail.length;i++){
+    const c=ui.trail[i];
+    h+=' / <span class="lnk" data-bci="'+i+'">'+esc(c.lb)+'</span>';
+  }
+  return h+'</div>';
+}
 function jumpTo(x,y){cam.follow=null;avatarMode=false;cam.x=x+0.5;cam.y=y+0.5;if(cam.cell<10)cam.cell=14;terrainDirty=true}
 function L(type,id,label){return '<span class="lnk" data-go="'+type+':'+id+'">'+esc(label)+'</span>'}
 
@@ -4949,7 +6022,11 @@ function renderPerson(id){
   h+='<div class="kv">';
   h+='<div class="k">Born</div><div class="v">Year '+Math.floor(p.born/DAYS_Y)+'</div>';
   if(f)h+='<div class="k">Realm</div><div class="v">'+L('fac',f.id,facTitle(f))+'</div>';
-  if(!dead&&p.home>=0&&sim.settlements[p.home])h+='<div class="k">Home</div><div class="v">'+L('sett',p.home,sim.settlements[p.home].nm)+'</div>';
+  if(!dead&&p.home>=0&&sim.settlements[p.home]){
+    h+='<div class="k">Home</div><div class="v">'+L('sett',p.home,sim.settlements[p.home].nm)+'</div>';
+    if(p.homeless)h+='<div class="k">Roof</div><div class="v" style="color:#d9a05a">none; sleeps in the lanes, waiting on the housing allotment</div>';
+    else if(p.hx!==undefined)h+='<div class="k">Roof</div><div class="v"><span class="lnk" data-j="'+p.hx+','+p.hy+'">the family house at '+p.hx+', '+p.hy+'</span></div>';
+  }
   if(!dead&&p.inArmy)h+='<div class="k">Status</div><div class="v">marching with the host</div>';
   h+='</div>';
   if(!dead){
@@ -5055,6 +6132,7 @@ function renderSett(id){
   if(st.steward!==undefined){const sw=sim.people.get(st.steward);
     if(sw)h+='<div class="k">Steward</div><div class="v">'+L('person',sw.id,fullName(sw))+(sw.loyal!==undefined?' <span class="sub">loyalty '+Math.round(sw.loyal*100)+'%</span>':'')+'</div>';}
   h+='<div class="k">Buildings</div><div class="v">'+st.houses+' houses · '+st.farms+' fields'+(st.market?' · market':'')+(st.temple?' · temple':'')+(st.keep?' · keep':'')+(st.walls?' · walls':'')+'</div>';
+  if(st.homeless)h+='<div class="k">Homeless</div><div class="v" style="color:#d9a05a">'+st.homeless+' souls sleep in the lanes; the houses are full</div>';
   if(st.lvTxt)h+='<div class="k">Livestock</div><div class="v">'+esc(st.lvTxt)+(st.hasHorse?' · mounted':'')+'</div>';
   if(st.religion>=0&&sim.religions[st.religion])h+='<div class="k">Faith</div><div class="v">'+L('religion',st.religion,sim.religions[st.religion].nm)+'</div>';
   h+='</div>';
@@ -5134,7 +6212,7 @@ function renderAnimal(id){
   const sp=SPECIES[a.sp];
   let h='<h2>'+sp.name+'</h2><div class="sub">'+BIOME_DEF[world.biome[idx(a.x,a.y)]].name+' · '+a.x+','+a.y+'</div>'+
     '<div class="kv"><div class="k">Age</div><div class="v">'+Math.floor(a.age/DAYS_Y*10)/10+' years</div></div>';
-  if(!sp.water){
+  if(!sp.water||sp.river){
     h+='<h3>Lineage</h3>';
     if(a.genes){
       const g=a.genes;
@@ -5145,7 +6223,11 @@ function renderAnimal(id){
         return '<div class="k">'+label+'</div><div class="v"><span style="color:'+col+'">'+
           (pct>0?'+':'')+pct+'% · '+word+'</span></div>';
       };
-      const L4=world.brains
+      const L4=sp.river
+        ?[['Wariness','wary','oblivious'],['Appetite','gluttonous','frugal'],['Upstream drive','driven','listless'],['School instinct','schooling','solitary']]
+        :sp.amph
+        ?[['Wariness','wary','oblivious'],['Appetite','ever-hungry','patient'],['Ambush boldness','fearless','hesitant'],['Territory instinct','territorial','tolerant']]
+        :world.brains
         ?[['Threat sense','wary','oblivious'],['Food sense','keen-nosed','dull-nosed'],['Escape circuit','skittish','fearless'],['Forward drive','restless','sluggish']]
         :[['Wariness','wary','oblivious'],['Appetite','gluttonous','frugal'],['Boldness','bold','timid'],['Herd instinct','gregarious','solitary']];
       h+='<div class="kv">';
@@ -5158,7 +6240,7 @@ function renderAnimal(id){
       h+='<div class="sub">Founder stock — ancestral instincts, unmutated. Its descendants will drift.</div>';
     }
   }
-  if(!world.brains&&!sp.water){
+  if((!world.brains&&!sp.water)||sp.river||sp.amph){
     // instinct mind: the actual utility weighing, shown as its chain of thought
     h+='<h3>Instincts</h3><div class="kv">';
     h+='<div class="k">Doing</div><div class="v">'+esc(a.act||'idling')+'</div>';
@@ -5167,9 +6249,12 @@ function renderAnimal(id){
     h+='</div>';
     const nbar=(label,val,color)=>'<div style="font-size:11px;color:var(--faint)">'+label+'</div>'+
       '<div class="bar"><i style="width:'+Math.round(clamp(val||0,0,1)*100)+'%;background:'+color+'"></i></div>';
-    h+=nbar('Hunger',a.hun,'#c2a05a')+nbar('Thirst',a.thr,'#6e9ca8')+nbar('Fatigue',a.fat,'#8d846c');
+    h+=nbar('Hunger',a.hun,'#c2a05a');
+    if(!sp.water&&!sp.amph)h+=nbar('Thirst',a.thr,'#6e9ca8');
+    h+=nbar('Fatigue',a.fat,'#8d846c');
+    if(a.run!==undefined)h+=nbar('Spawning urge',a.run,'#c98a8a');
   }
-  if(world.brains&&!sp.water){
+  if(world.brains&&!sp.water&&!sp.amph){
     const br=a.brain;
     h+='<h3>Mind</h3>';
     // doing / sensing / urge, all read off the living network
@@ -5333,11 +6418,28 @@ $('#panelbody').addEventListener('click',e=>{
   }
   const act2=e.target.closest('[data-act2]');
   if(act2&&act2.dataset.act2==='timelapse'){openTimelapse();return}
+  const ob=e.target.closest('[data-obs]');
+  if(ob){
+    const parts=ob.dataset.obs.split('|');
+    ui.obsSec=parts[1]||null;ui.obsArg=parts[2]!==undefined&&parts[2]!==''?parts[2]:null;ui.obsQ='';
+    ui.setTab(parts[0]);return;
+  }
+  const so=e.target.closest('[data-sort]');
+  if(so){ui.obsSort=so.dataset.sort;ui.renderPanel(true);return}
+  const bci=e.target.closest('[data-bci]');
+  if(bci){
+    const i=+bci.dataset.bci;
+    const c=ui.trail[i];
+    ui.trail.length=i; // step back up the descent
+    if(c){sel=c.type==='tile'?{type:'tile',x:c.x,y:c.y}:{type:c.type,id:c.id};trailPush(sel);ui.setTab('inspect')}
+    return;
+  }
   const go=e.target.closest('[data-go]');
   if(go){
     const[type,idS]=go.dataset.go.split(':');const id=+idS;
     if(type==='book'){showBook(id);return}
     sel={type,id};
+    trailPush(sel);
     if(type==='sett'){const st=sim.settlements[id];if(st)jumpTo(st.x,st.y)}
     if(type==='fac'){const f=sim.factions[id];const cap=sim.settlements[f.capital];if(cap&&!f.dead)jumpTo(cap.x,cap.y)}
     if(type==='person'){const p=sim.people.get(id);if(p)jumpTo(p.x,p.y)}
@@ -5401,8 +6503,14 @@ $('#panelbody').addEventListener('input',e=>{
   if(e.target.id==='histsearch'){ui.histSearch=e.target.value;
     clearTimeout(ui._st);ui._st=setTimeout(()=>{const el=$('#histsearch');const pos=el.selectionStart;ui.renderPanel(true);
       const el2=$('#histsearch');if(el2){el2.focus();el2.setSelectionRange(pos,pos)}},250)}
+  if(e.target.id==='obsSearch'){ui.obsQ=e.target.value;
+    clearTimeout(ui._ot);ui._ot=setTimeout(()=>{const el=$('#obsSearch');const pos=el?el.selectionStart:0;ui.renderPanel(true);
+      const el2=$('#obsSearch');if(el2){el2.focus();el2.setSelectionRange(pos,pos)}},250)}
 });
-document.querySelectorAll('#tabs button').forEach(b=>b.addEventListener('click',()=>ui.setTab(b.dataset.tab)));
+document.querySelectorAll('#tabs button').forEach(b=>b.addEventListener('click',()=>{
+  if(b.dataset.tab!=='inspect'){ui.obsSec=null;ui.obsArg=null;ui.obsQ=''}
+  ui.setTab(b.dataset.tab);
+}));
 
 /* ---------- input: mouse ---------- */
 let dragging=false,dragMoved=false,lastMx=0,lastMy=0;
@@ -5453,7 +6561,7 @@ function pickAt(cx,cy){
   const sid=world.settleId[idx(wx,wy)];
   if(sid>=0&&sim.settlements[sid]&&!sim.settlements[sid].razed&&world.building[idx(wx,wy)]){sel={type:'sett',id:sid};done();return}
   sel={type:'tile',x:wx,y:wy};done();
-  function done(){$('#side').classList.remove('hidden');mmPos();ui.setTab('inspect')}
+  function done(){ui.trail=[];trailPush(sel);$('#side').classList.remove('hidden');mmPos();ui.setTab('inspect')}
 }
 $('#minimap').addEventListener('click',e=>{
   const r=$('#minimap').getBoundingClientRect();
@@ -5477,7 +6585,7 @@ addEventListener('keydown',e=>{
   else if(k==='e'||k==='E'){toggleAvatar()}
   else if(k==='t'||k==='T'){ui.labels=!ui.labels}
   else if(k==='r'||k==='R'){toggleRoads(!ui.showRoads)}
-  else if(k==='h'||k==='H'){$('#side').classList.remove('hidden');mmPos();ui.setTab('chronicle')}
+  else if(k==='h'||k==='H'){$('#side').classList.remove('hidden');mmPos();ui.obsSec='chronicle';ui.setTab('history')}
   else if(k==='f'||k==='F'){
     if(sel&&sel.type==='person')cam.follow={type:'person',id:sel.id};
     else if(sel&&sel.type==='army')cam.follow={type:'army',id:sel.id};
@@ -5574,6 +6682,7 @@ $('#modalbox').addEventListener('click',e=>{
   $('#modal').classList.add('hidden');
   if(type==='book'){showBook(id);return}
   sel={type,id};
+  trailPush(sel);
   $('#side').classList.remove('hidden');mmPos();ui.setTab('inspect');
 });
 /* ---------- timelapse ---------- */
@@ -5698,6 +6807,7 @@ function saveString(){
       snaps:sim.snaps.map(o=>({y:o.y,d:b64FromBuf(o.d.buffer)})),
       armies:sim.armies,caravans:sim.caravans,migrants:sim.migrants,
       evSeq:sim.evSeq,
+      yb:sim.yb||0,yd:sim.yd||0,yfever:sim.yfever||0,lastYB:sim.lastYB||0,lastYD:sim.lastYD||0,
       mon:sim.mon||{},currencies:sim.currencies||[],
       settlements:sim.settlements.map(s=>{
         const r={};
@@ -5737,6 +6847,7 @@ function loadString(str){
     drought:s.drought,stats:s.stats,pathQueue:[]};
   sim.fires=s.fires||{};
   sim.evSeq=s.evSeq||((sim.events&&sim.events.length)?Math.max(...sim.events.map(e=>e.id||0))+1:1);
+  sim.yb=s.yb||0;sim.yd=s.yd||0;sim.yfever=s.yfever||0;sim.lastYB=s.lastYB||0;sim.lastYD=s.lastYD||0;
   rebuildEvMap();
   sim.ships=s.ships||[];sim.relics=s.relics||[];sim.eras=s.eras||[];sim.books=s.books||[];
   sim.beast=s.beast||null;
@@ -5866,7 +6977,7 @@ function drawWormRaster(){
   const cnv=document.getElementById('wormRaster');
   if(!cnv)return;
   const a=sim.animals.find(x=>x.id===sel.id);
-  if(!a||SPECIES[a.sp].water)return;
+  if(!a||SPECIES[a.sp].water||SPECIES[a.sp].amph)return;
   if(!a.brain)a.brain=wormNewBrain();
   const br=a.brain,g=cnv.getContext('2d');
   g.fillStyle='#0d0b08';g.fillRect(0,0,330,228);
