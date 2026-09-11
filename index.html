@@ -3775,6 +3775,93 @@ function tunnelMonthly(){
    Attacks tallied per species declare a cull; an empty larder and a dear meat price
    declare a meat hunt for whatever actually grazes nearby. Bait is real meat staked
    at the wood's edge, and it works because carrion already pulls every hungry nose. */
+/* ---- the town wall: a real circuit, planned from fear and raised stone by stone ----
+   Attacks and losses justify it, masonry makes it possible, mined stone pays for it,
+   and it grows around the town over months where anyone can watch the gap close. */
+function planTownWall(st){
+  const W=world.W;
+  let R=4;
+  for(const i of st.tiles)if(world.building[i]){
+    const d=Math.max(Math.abs(i%W-st.x),Math.abs(((i/W)|0)-st.y));
+    if(d+2>R)R=d+2;
+  }
+  R=Math.min(R,10);
+  const plan=[];
+  let gates=0;
+  for(let dy=-R;dy<=R;dy++)for(let dx=-R;dx<=R;dx++){
+    if(Math.max(Math.abs(dx),Math.abs(dy))!==R)continue;
+    const x=st.x+dx,y=st.y+dy;
+    if(!inb(x,y))continue;
+    const i=idx(x,y);
+    const b2=world.biome[i];
+    if(isWater(b2)||world.river[i])continue;      // the water is its own wall
+    if(world.building[i])continue;
+    if(world.road[i]>=ROAD_T){plan.push(-i-1);gates++} // the road keeps its gate (negative marks a gate)
+    else plan.push(i);
+  }
+  if(plan.length<8)return null;
+  if(!gates){ // every circuit needs one door
+    const gi=ri(0,plan.length-1);
+    plan[gi]=-plan[gi]-1;
+  }
+  return plan;
+}
+function wallsMonthly(st,f){
+  if(st.walled||st.razed)return;
+  if(!st.wallPlan){
+    if(typeof facKnows==='function'&&!facKnows(f,'masonry'))return;
+    if(st.popC<30||st.stock.stone<10)return;
+    let threatSum=0;if(st.threat)for(const k in st.threat)threatSum+=st.threat[k];
+    if(threatSum<4&&(st.lvLost||0)<6)return; // fear must be earned before stone is cut for it
+    const plan=planTownWall(st);
+    if(!plan)return;
+    st.wallPlan=plan;st.wallAt=0;
+    logEvent('misc',st.nm+' begins raising a wall; the beasts and the raiders have taken enough.',st.x,st.y,{sett:st.id},
+      {why:{attacks:threatSum,headLost:st.lvLost||0,circuit:plan.length}});
+    return;
+  }
+  // masons lay what the stone stores allow
+  let crew=Math.min(4,Math.max(1,Math.floor(st.popC/12)));
+  let laid=0;
+  while(crew>0&&st.wallAt<st.wallPlan.length){
+    if(st.stock.stone<2)break;
+    const raw=st.wallPlan[st.wallAt];
+    const i=raw<0?(-raw-1):raw;
+    st.wallAt++;
+    if(world.building[i])continue; // the town grew into the line; leave the gap
+    st.stock.stone-=2;
+    world.building[i]=raw<0?BUILD.GATE:BUILD.WALL;
+    st.walls=(st.walls||0)+1;
+    crew--;laid++;terrainDirty=true;
+  }
+  if(st.wallAt>=st.wallPlan.length){
+    st.walled=1;
+    const segs=st.walls||0;
+    st.wallPlan=null;
+    logEvent('misc','The wall of '+st.nm+' is closed: '+segs+' courses of cut stone stand where the fear used to be.',st.x,st.y,{sett:st.id},
+      {why:{courses:segs}});
+    toast('▣ '+st.nm+' has closed its wall.',st.x,st.y);
+  }else if(!laid&&st.stock.stone<2&&chance(0.05)){
+    logEvent('misc','The wall of '+st.nm+' stands half-built; the stone stores are empty and the gap is where the wolves come through.',st.x,st.y,{sett:st.id},
+      {cause:'no stone left in the stores'});
+  }
+}
+/* ---- leads: rope from a log and cut grass, the tool that turns wild into herd ---- */
+function leadsMonthly(st){
+  if(st.razed||st.popC<12)return;
+  if((st.stock.leads||0)>=6||st.stock.wood<2)return;
+  // fiber is real grass: a drought year cuts no rope
+  for(const i of st.tiles){
+    if(!world.veg)break;
+    const s2=world.vsp[i];
+    if(s2===255||!PLANTS[s2]||PLANTS[s2].kind!=='grass')continue;
+    if(world.veg[i]<0.15)continue;
+    world.veg[i]-=0.08;
+    st.stock.wood-=1;
+    st.stock.leads=(st.stock.leads||0)+1;
+    return;
+  }
+}
 function huntsMonthly(){
   for(const st of sim.settlements){
     if(st.razed||st.popC<12)continue;
@@ -4303,7 +4390,7 @@ function stepAnimal(a,dx,dy,fleeing){
   if(!inb(nx,ny))return false;
   const i=idx(nx,ny);
   if(!passable(i))return false;
-  if(world.building[i]===BUILD.FENCE)return false; // a fence is a fence, to wolf and cow alike
+  if(world.building[i]===BUILD.FENCE||world.building[i]===BUILD.WALL)return false; // fence and rampart alike are walls to every beast
   if(world.building[i]===BUILD.GATE&&a.dom!==world.settleId[i])return false; // the gate opens only for the town's own herd
   if(world.settleId[i]>=0&&!fleeing&&world.settleId[i]!==a.dom)return false; // livestock may walk its own town
   a.x=nx;a.y=ny;
@@ -4639,7 +4726,8 @@ function instinctAnimalUpdate(a,sp,dead){
             if(!stepAnimal(a,Math.sign(prey.x-a.x),Math.sign(prey.y-a.y),false)){
               // a fence in the way: hunger and boldness decide whether it is cleared
               const bx2=a.x+Math.sign(prey.x-a.x),by2=a.y+Math.sign(prey.y-a.y);
-              if(inb(bx2,by2)&&world.building[idx(bx2,by2)]===BUILD.FENCE&&a.hun>0.7&&g[2]>1.0){
+              const bb2=inb(bx2,by2)?world.building[idx(bx2,by2)]:0;
+              if((bb2===BUILD.FENCE||bb2===BUILD.GATE)&&a.hun>0.7&&g[2]>1.0){
                 const ow=sim.settlements[world.settleId[idx(bx2,by2)]];
                 const cond=ow&&ow.pen?ow.pen.cond:1;
                 if(chance(0.15+(1-cond)*0.35)){
@@ -4661,13 +4749,21 @@ function instinctAnimalUpdate(a,sp,dead){
             // empty woods and a burning belly: the boldest lines begin to weigh people
             let took=false;
             if(a.hun>0.85&&g[2]>1.05&&chance(0.06)){
-              // only in the wilds: a town's ground means noise, fire, and the watch
+              // anywhere hunger reaches: but a crowd is its own wall, and towns raise real ones
               let victim=null,vd=4;
               for(const q of sim.people.values()){
                 if(q.dead||q.inArmy||q.sea||q.tun)continue;
-                if(world.terrId[idx(q.x,q.y)]>=0)continue; // inside any town's ground, people are not prey
                 const d2=Math.max(Math.abs(q.x-a.x),Math.abs(q.y-a.y));
                 if(d2<vd){vd=d2;victim=q}
+              }
+              if(victim&&world.terrId[idx(victim.x,victim.y)]>=0){
+                // safety in numbers: every neighbor within sight makes the beast likelier to lose its nerve
+                let crowd3=0;
+                for(const q of sim.people.values()){
+                  if(q.dead||q.id===victim.id)continue;
+                  if(Math.max(Math.abs(q.x-victim.x),Math.abs(q.y-victim.y))<=3&&++crowd3>=5)break;
+                }
+                if(rnd()<crowd3*0.22){victim=null;a.act='slinking back from the lamplight'}
               }
               if(victim){
                 took=true;
@@ -4686,10 +4782,11 @@ function instinctAnimalUpdate(a,sp,dead){
                     for(const q of sim.people.values()){
                       if(q.dead||q.inArmy||q.sea||q.tun||q.id===victim.id||q.home!==vst.id)continue;
                       if(q.prof!=='hunter'&&q.prof!=='soldier')continue;
-                      if(Math.max(Math.abs(q.x-a.x),Math.abs(q.y-a.y))>6)continue;
+                      if(Math.max(Math.abs(q.x-a.x),Math.abs(q.y-a.y))>8)continue;
                       if(!gd||q.brav>gd.brav)gd=q;
                     }
-                    if(gd&&gd.brav>0.4&&rnd()<0.25+gd.brav*0.4){
+                    const inTown=world.terrId[idx(victim.x,victim.y)]>=0;
+                    if(gd&&gd.brav>0.4&&rnd()<(inTown?0.4:0.25)+gd.brav*0.4){
                       a._cause='slain by '+fullName(gd)+', come running at the screams';a._bite=0;
                       dead.push(a);saved=true;
                       addDist(gd,3,'Saved '+fullName(victim)+' from a '+sp.name.toLowerCase());
@@ -5196,11 +5293,13 @@ function monthly(){
     }
     else if(!st.temple&&st.religion>=0&&st.popC>=30&&st.stock.stone>=20){st.stock.stone-=20;buildStruct(st,BUILD.TEMPLE)}
     else if(!st.keep&&f.capital===st.id&&facKnows(f,'masonry')&&st.stock.stone>=45){st.stock.stone-=45;buildStruct(st,BUILD.KEEP)}
-    else if(facKnows(f,'masonry')&&st.walls<Math.min(8,Math.floor(st.popC/12))&&st.stock.stone>=15){st.stock.stone-=15;buildStruct(st,BUILD.WALL)}
+    // town walls are planned as a circuit and raised stone by stone (wallsMonthly), no longer scattered
     // prices settle monthly; debts are called or repaid
     econMonthly(st);
     if(typeof householdMonthly==='function')householdMonthly(st);
     maybeBuildPen(st);
+    wallsMonthly(st,f);
+    leadsMonthly(st);
     // sanitation: dense towns breed sickness in proportion to their size and crowding — cities are sinks, not fountains
     if(st.popC>120){
       const crowd2=st.popC/(st.houses*6+6);
@@ -5258,13 +5357,14 @@ function monthlyDomestic(){
   for(const st of sim.settlements){
     if(st.razed||st.popC<15)continue;
     const w=nearAnimal(st.x,st.y,8,o=>SPECIES[o.sp].dom&&o.dom===undefined);
-    if(w&&chance(0.5)){
+    if(w&&(st.stock.leads||0)>=1&&chance(0.5)){
+      st.stock.leads--; // the rope is spent bringing it home
       w.dom=st.id;
       const spn=SPECIES[w.sp].name.toLowerCase();
       const key='tame'+w.sp;
       if(!st[key]){st[key]=1;
-        logEvent('life','The folk of '+st.nm+' have tamed their first '+spn+'s.',st.x,st.y,{sett:st.id},
-          {cause:'wild '+spn+'s grazed close beside the fields'});
+        logEvent('life','The folk of '+st.nm+' have led their first '+spn+' home on a rope of bark and grass.',st.x,st.y,{sett:st.id},
+          {cause:'wild '+spn+'s grazed close beside the fields, and there was a lead in the storehouse'});
       }
     }
   }
@@ -7033,6 +7133,7 @@ function renderTile(x,y){
         if(sst.inv[GX.salt]>=1)h+='<div class="k">Salt</div><div class="v">'+Math.round(sst.inv[GX.salt])+'</div>';
         if(sst.inv[GX.tools]>=1)h+='<div class="k">Tools</div><div class="v">'+Math.round(sst.inv[GX.tools])+'</div>';
         if(sst.inv[GX.metal]>=1)h+='<div class="k">Metal</div><div class="v">'+Math.round(sst.inv[GX.metal])+'</div>';
+        if(sst.stock.leads)h+='<div class="k">Leads</div><div class="v">'+sst.stock.leads+' coiled ropes</div>';
       }
       h+='</div><div class="sub" style="font-size:11px">every log here rode home on a real back; every plank drawn from it built something you can find</div>';
     }
@@ -7267,6 +7368,9 @@ function renderSett(id){
     if(sw)h+='<div class="k">Steward</div><div class="v">'+L('person',sw.id,fullName(sw))+(sw.loyal!==undefined?' <span class="sub">loyalty '+Math.round(sw.loyal*100)+'%</span>':'')+'</div>';}
   h+='<div class="k">Buildings</div><div class="v">'+st.houses+' houses · '+st.farms+' fields'+((st.stores||0)?' · '+st.stores+' storehouse'+(st.stores>1?'s':''):'')+(st.market?' · market':'')+(st.temple?' · temple':'')+(st.keep?' · keep':'')+(st.walls?' · walls':'')+'</div>';
   if(st.pen)h+='<div class="k">Pen</div><div class="v">a fenced pasture, timbers '+(st.pen.cond>0.66?'sound':st.pen.cond>0.33?'weathering':'rotting')+'</div>';
+  if(st.walled)h+='<div class="k">Wall</div><div class="v">a closed circuit of '+(st.walls||0)+' stone courses</div>';
+  else if(st.wallPlan)h+='<div class="k">Wall</div><div class="v" style="color:#d9a05a">rising: '+(st.wallAt||0)+' of '+st.wallPlan.length+' courses laid'+(st.stock.stone<2?'; stalled, the stone stores are empty':'')+'</div>';
+  if(st.stock.leads)h+='<div class="k">Leads</div><div class="v">'+st.stock.leads+' ropes of bark and grass, for bringing beasts home</div>';
   if(st.lvLost&&!st.pen)h+='<div class="k">Herds</div><div class="v" style="color:#d9a05a">'+st.lvLost+' head taken by beasts; the town has no fence</div>';
   if(st.hunt)h+='<div class="k">The hunt</div><div class="v">out against the '+esc(st.hunt.sp.toLowerCase())+'s ('+(st.hunt.kind==='cull'?'a cull, for what was taken':'for the larder')+') · '+(st.hunt.kills||0)+' taken'+(st.baitId?' · bait staked':'')+'</div>';
   if(st.threat){
