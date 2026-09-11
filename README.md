@@ -151,6 +151,8 @@ A wolf's hunger now reaches into towns as it always could in the old world, but 
 
 ![Skiashuos closes its wall: the stone circuit with its gates, the lake standing as the western wall, pen and graveyard inside](screenshots/28-wall.jpg)
 
+![A famine-struck town's gate standing open, unbarred these four days, glowing amber in the fence ring](screenshots/29-gate.jpg)
+
 ### The hunt goes both ways
 A starving predator of a bold line, in woods the drought has emptied, will weigh a person on a lonely path; only in the wilds, never inside a town's ground, where noise and the watch rule. The attack is a contest: a brave hunter kills the wolf and is celebrated, a farmer may be dragged into the brush, and a neighbor can come running at the screams. Every man-kill feeds the body count that makes legends. Towns answer from their ledgers, never from dice: attacks are tallied per species, and enough of them declare a cull, hunters going out specifically against the offending kind for a season. An empty larder and a dear market price for meat send them instead after whatever herbivore actually grazes nearby, so the economy drives the hunting pressure. A cull with surplus meat stakes out bait, drawn as a β at the wood's edge: the bait is a real lump of granary meat that the existing carrion senses of every hungry nose can find, a hunter lies in wait beside it, and the trap resolves as bravery against tooth. Sometimes the quarry dies at the bait. Sometimes a fox steals the meat first. Sometimes the hunter is mauled at their own trap.
 

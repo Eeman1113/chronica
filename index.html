@@ -7135,7 +7135,15 @@ function renderTile(x,y){
   const b=world.biome[i],def=BIOME_DEF[b];
   let h='<h2>'+def.name+'</h2><div class="sub">'+x+', '+y+(world.river[i]?' · river':'')+(world.road[i]>=ROAD_T?(world.river[i]?' · bridge':' · road'):'')+'</div>';
   const bld=world.building[i];
-  if(bld)h+='<div class="kv"><div class="k">Structure</div><div class="v">'+BUILD_DEF[bld].name+'</div></div>';
+  if(bld){
+    let bnm=BUILD_DEF[bld].name;
+    if(bld===BUILD.GATE){
+      const gs=world.settleId[i]>=0?sim.settlements[world.settleId[i]]:null;
+      const gOpen2=!!(gs&&gs.gates&&gs.gates[i]&&gs.gates[i].o);
+      bnm+=gOpen2?' <span style="color:#d9a05a">· standing open</span>':' · barred';
+    }
+    h+='<div class="kv"><div class="k">Structure</div><div class="v">'+bnm+'</div></div>';
+  }
   if(world.resource[i])h+='<div class="kv"><div class="k">Resource</div><div class="v">'+RES_DEF[world.resource[i]].name+'</div></div>';
   if(world.cut[i]===6){
     const tn=(sim.tunnels||[]).find(t2=>t2.line&&t2.line.indexOf(i)>=0);
