@@ -3771,6 +3771,76 @@ function tunnelMonthly(){
     }
   }
 }
+/* ---- the planned hunt: a town reads its ledgers and goes out after ONE species ----
+   Attacks tallied per species declare a cull; an empty larder and a dear meat price
+   declare a meat hunt for whatever actually grazes nearby. Bait is real meat staked
+   at the wood's edge, and it works because carrion already pulls every hungry nose. */
+function huntsMonthly(){
+  for(const st of sim.settlements){
+    if(st.razed||st.popC<12)continue;
+    // finished or expired orders are reported
+    if(st.hunt){
+      if(sim.day>st.hunt.until||st.hunt.kills>=3){
+        logEvent('life','The hunt of '+st.nm+' comes home: '+(st.hunt.kills||0)+' '+st.hunt.sp.toLowerCase()+(st.hunt.kills===1?'':'s')+' taken.',st.x,st.y,{sett:st.id},
+          {why:{kills:st.hunt.kills||0,reason:st.hunt.kind}});
+        if(st.hunt.kind==='cull'&&st.threat)st.threat[st.hunt.sp]=Math.max(0,(st.threat[st.hunt.sp]||0)-(st.hunt.kills||0));
+        st.hunt=null;
+        st.huntCd=sim.day+180; // the town rests its spears before it marches out again
+      }
+    }
+    if(!st.hunt&&st.threat&&(!st.huntCd||sim.day>st.huntCd)){
+      // the cull: the species with the worst tally has earned the town's full attention
+      let worst=null,wn=3;
+      for(const k in st.threat)if(st.threat[k]>wn){wn=st.threat[k];worst=k}
+      if(worst){
+        st.hunt={sp:worst,kind:'cull',until:sim.day+90,kills:0};
+        st.threat[worst]=Math.max(0,wn-3); // declaring spends the grievance; fresh attacks must earn the next hunt
+        logEvent('life','The men of '+st.nm+' declare a hunt against the '+worst.toLowerCase()+'s; too much has been taken.',st.x,st.y,{sett:st.id},
+          {why:{attacks:wn,headLost:st.lvLost||0}});
+      }
+    }
+    if(!st.hunt&&(!st.huntCd||sim.day>st.huntCd)&&st.inv&&st.inv[GX.meat]<st.popC*0.3&&st.price&&st.price[GX.meat]>GPROP[GX.meat].base*1.6){
+      // the meat hunt: the larder and the market agree; go after what actually grazes here
+      const cnt={};
+      for(const a of sim.animals){
+        const sp2=SPECIES[a.sp];
+        if(sp2.pred||sp2.water||sp2.amph||a.dom!==undefined)continue;
+        if(Math.max(Math.abs(a.x-st.x),Math.abs(a.y-st.y))>20)continue;
+        cnt[sp2.name]=(cnt[sp2.name]||0)+1;
+      }
+      let best2=null,bn=3;
+      for(const k in cnt)if(cnt[k]>bn){bn=cnt[k];best2=k}
+      if(best2){
+        st.hunt={sp:best2,kind:'meat',until:sim.day+60,kills:0};
+        logEvent('life','The hunters of '+st.nm+' go out after the '+best2.toLowerCase()+'s; the larder is thin and meat is dear.',st.x,st.y,{sett:st.id},
+          {why:{meatStored:Math.round(st.inv[GX.meat]),meatPrice:Math.round(st.price[GX.meat]*10)/10,nearbyHead:bn}});
+      }
+    }
+    // bait: a cull spends SURPLUS meat, once, to bring the killer to a chosen spot; no town starves itself for a wolf
+    if(st.hunt&&st.hunt.kind==='cull'&&!st.hunt.baited&&!st.baitId&&st.inv&&st.inv[GX.meat]>=Math.max(14,st.popC*0.5)){
+      let spot=-1,bd2=-1;
+      for(const i of st.tiles){
+        if(world.building[i]||world.river[i])continue;
+        const b2=world.biome[i];
+        if(b2!==B.GRASS&&b2!==B.SHRUB)continue;
+        const x=i%world.W,y=(i/world.W)|0;
+        const d=Math.max(Math.abs(x-st.x),Math.abs(y-st.y));
+        if(d>bd2){bd2=d;spot=i}
+      }
+      if(spot>=0){
+        st.inv[GX.meat]-=6;
+        const spIx=SPECIES.findIndex(s2=>s2.name===st.hunt.sp);
+        const bc={id:sim.nextId++,sp:spIx>=0?spIx:0,x:spot%world.W,y:(spot/world.W)|0,d:sim.day,rot:0,mass:6,
+          cause:'staked as bait by the hunters of '+st.nm,bait:1,baitSt:st.id};
+        sim.corpses.push(bc);
+        st.baitId=bc.id;st.hunt.baited=1;
+        logEvent('life','The hunters of '+st.nm+' stake out bait at the edge of the wilds and settle in to wait.',bc.x,bc.y,{sett:st.id},
+          {why:{meatSpent:6,quarry:st.hunt.sp}});
+      }
+    }
+    if(st.baitId&&!sim.corpses.some(c2=>c2.id===st.baitId))st.baitId=0; // eaten, rotted, or the trap was sprung
+  }
+}
 function homesMonthly(){
   // the housing allotment: houses hold six souls; wealthier families keep their roofs,
   // whoever does not fit is homeless until a house frees up or they pay to raise one
@@ -3855,7 +3925,8 @@ function maybeStartTrip(p){
   };
   switch(p.prof){
     case 'hunter':{ // stalk real prey if any is in range, otherwise roam the wilds
-      const prey=nearestAnimal(p.x,p.y,14,true);
+      const order=st.hunt;
+      const prey=order?nearAnimal(p.x,p.y,16,o=>SPECIES[o.sp].name===order.sp&&o.dom===undefined):nearestAnimal(p.x,p.y,14,true);
       if(prey)target={x:prey.x,y:prey.y};
       else{r=14;target=want((i,b)=>b===B.FOREST||b===B.SHRUB||b===B.TAIGA)}
       break}
@@ -3898,11 +3969,17 @@ function resolveMission(p){
           }else if(sp.dangerous){
             const nm=sp.name.toLowerCase();
             if(rnd()<0.25+p.brav*0.4){removeAnimal(a);addDist(p,3,'Slew a great '+nm+' in the wilds');
+              const so4=p.home>=0?sim.settlements[p.home]:null;
+              if(so4&&so4.hunt&&so4.hunt.sp===sp.name)so4.hunt.kills=(so4.hunt.kills||0)+1;
               if(p.dist>=6&&chance(0.4))logEvent('life',fullName(p)+' of '+sim.settlements[p.home].nm+' slew a great '+nm+'.',p.x,p.y,{p:p.id},{actor:p.id});
               bonus(p,'food',16)}
             else if(chance(0.3)){a.manKills=(a.manKills||0)+1;noteAnimalKill(a);deadQ.push([p,'was killed by a '+nm+' while hunting']);return}
-          }else if(sp.pred&&chance(0.6)){removeAnimal(a);addDist(p,1);bonus(p,'food',6)}
-          else if(!sp.water){removeAnimal(a);bonus(p,'food',12)}
+          }else if(sp.pred&&chance(0.6)){removeAnimal(a);addDist(p,1);bonus(p,'food',6);
+            const so2=p.home>=0?sim.settlements[p.home]:null;
+            if(so2&&so2.hunt&&so2.hunt.sp===sp.name)so2.hunt.kills=(so2.hunt.kills||0)+1}
+          else if(!sp.water){removeAnimal(a);bonus(p,'food',12);
+            const so3=p.home>=0?sim.settlements[p.home]:null;
+            if(so3&&so3.hunt&&so3.hunt.sp===sp.name)so3.hunt.kills=(so3.hunt.kills||0)+1}
         }
       }
       return;
@@ -4547,7 +4624,8 @@ function instinctAnimalUpdate(a,sp,dead){
                     {actor:guard2.id,why:{bravery:+guard2.brav.toFixed(2),headLostBefore:stt.lvLost||0,penned:stt.pen?1:0}});
                   defended=true;
                 }
-                if(!defended)stt.lvLost=(stt.lvLost||0)+1; // another head gone: the ledger that buys a fence
+                if(!defended){stt.lvLost=(stt.lvLost||0)+1; // another head gone: the ledger that buys a fence
+                  stt.threat=stt.threat||{};stt.threat[sp.name]=(stt.threat[sp.name]||0)+1}
               }
               if(!defended){
                 prey._cause='brought down by a '+sp.name.toLowerCase();prey._bite=3;
@@ -4579,7 +4657,57 @@ function instinctAnimalUpdate(a,sp,dead){
           if(sal&&chance(sp.name==='Bear'?0.5:0.15)){
             removeAnimal(sal);a.hun=Math.max(0,a.hun-0.5);
             a.act='fishing salmon from the shallows';
-          }else{a.act='hunting for a trail';const k=ri(0,7);stepAnimal(a,DX8[k],DY8[k],false)}
+          }else{
+            // empty woods and a burning belly: the boldest lines begin to weigh people
+            let took=false;
+            if(a.hun>0.85&&g[2]>1.05&&chance(0.06)){
+              // only in the wilds: a town's ground means noise, fire, and the watch
+              let victim=null,vd=4;
+              for(const q of sim.people.values()){
+                if(q.dead||q.inArmy||q.sea||q.tun)continue;
+                if(world.terrId[idx(q.x,q.y)]>=0)continue; // inside any town's ground, people are not prey
+                const d2=Math.max(Math.abs(q.x-a.x),Math.abs(q.y-a.y));
+                if(d2<vd){vd=d2;victim=q}
+              }
+              if(victim){
+                took=true;
+                const armed=victim.prof==='hunter'||victim.prof==='soldier';
+                const vst=victim.home>=0?sim.settlements[victim.home]:null;
+                if(armed&&rnd()<0.25+victim.brav*0.45){
+                  a._cause='slain by '+fullName(victim)+', who it mistook for prey';a._bite=0;
+                  dead.push(a);
+                  addDist(victim,3,'Killed the '+sp.name.toLowerCase()+' that came for them on the road');
+                  if(chance(0.4))logEvent('life',fullName(victim)+' fought off and killed a starving '+sp.name.toLowerCase()+'.',a.x,a.y,{p:victim.id},{actor:victim.id,why:{bravery:+victim.brav.toFixed(2),beastHunger:+a.hun.toFixed(2)}});
+                }else{
+                  // the watch may still answer before the worst
+                  let saved=false;
+                  if(vst&&!vst.razed){
+                    let gd=null;
+                    for(const q of sim.people.values()){
+                      if(q.dead||q.inArmy||q.sea||q.tun||q.id===victim.id||q.home!==vst.id)continue;
+                      if(q.prof!=='hunter'&&q.prof!=='soldier')continue;
+                      if(Math.max(Math.abs(q.x-a.x),Math.abs(q.y-a.y))>6)continue;
+                      if(!gd||q.brav>gd.brav)gd=q;
+                    }
+                    if(gd&&gd.brav>0.4&&rnd()<0.25+gd.brav*0.4){
+                      a._cause='slain by '+fullName(gd)+', come running at the screams';a._bite=0;
+                      dead.push(a);saved=true;
+                      addDist(gd,3,'Saved '+fullName(victim)+' from a '+sp.name.toLowerCase());
+                      logEvent('life',fullName(gd)+' drove off the '+sp.name.toLowerCase()+' that had '+fullName(victim)+' by the arm.',a.x,a.y,{p:gd.id,sett:vst.id},{actor:gd.id,why:{bravery:+gd.brav.toFixed(2)}});
+                    }
+                  }
+                  if(!saved){
+                    a.manKills=(a.manKills||0)+1;a.hun=0;
+                    killPerson(victim,'taken by a starving '+sp.name.toLowerCase()+(vst?' near '+vst.nm:' in the wilds'));
+                    noteAnimalKill(a);
+                    a.act='dragging its kill into the brush';
+                    if(vst&&!vst.razed){vst.threat=vst.threat||{};vst.threat[sp.name]=(vst.threat[sp.name]||0)+1}
+                  }
+                }
+              }
+            }
+            if(!took){a.act='hunting for a trail';const k=ri(0,7);stepAnimal(a,DX8[k],DY8[k],false)}
+          }
         }
       }else if(grazeHere){
         const gi=idx(a.x,a.y);
@@ -4607,7 +4735,33 @@ function instinctAnimalUpdate(a,sp,dead){
       }
       break;
     case 'scav':
-      if(Math.max(Math.abs(carc.x-a.x),Math.abs(carc.y-a.y))<=1)feedFromCorpse(a,carc);
+      if(Math.max(Math.abs(carc.x-a.x),Math.abs(carc.y-a.y))<=1){
+        feedFromCorpse(a,carc);
+        if(carc.bait&&sim.settlements[carc.baitSt]&&!sim.settlements[carc.baitSt].razed){
+          // the trap is sprung: a hunter has been lying in this brush for days
+          const bst=sim.settlements[carc.baitSt];
+          let htr=null;
+          for(const q of sim.people.values()){
+            if(q.dead||q.inArmy||q.sea||q.tun||q.home!==bst.id||q.prof!=='hunter')continue;
+            if(!htr||q.brav>htr.brav)htr=q;
+          }
+          if(htr){
+            const quarry=bst.hunt&&bst.hunt.sp===sp.name;
+            if(rnd()<(quarry?0.45:0.2)+htr.brav*0.3){
+              a._cause='taken at the bait by '+fullName(htr);a._bite=0;
+              dead.push(a);
+              if(bst.hunt&&quarry)bst.hunt.kills=(bst.hunt.kills||0)+1;
+              addDist(htr,quarry?3:1,'Took a '+sp.name.toLowerCase()+' at the bait');
+              if(quarry||sp.dangerous)logEvent('life',fullName(htr)+' took the '+sp.name.toLowerCase()+' at the bait outside '+bst.nm+'.',a.x,a.y,{p:htr.id,sett:bst.id},
+                {actor:htr.id,why:{quarry:quarry?1:0,bravery:+htr.brav.toFixed(2)}});
+            }else if(sp.dangerous&&chance(0.2)){
+              a.manKills=(a.manKills||0)+1;
+              killPerson(htr,'mauled at their own bait by a '+sp.name.toLowerCase());
+              noteAnimalKill(a);
+            }
+          }
+        }
+      }
       else{a.act='drawn to carrion';stepAnimal(a,Math.sign(carc.x-a.x),Math.sign(carc.y-a.y),false)}
       break;
     case 'rest':a.act='resting';a.fat=Math.max(0,a.fat-0.15);break;
@@ -5085,6 +5239,7 @@ function monthly(){
   }
   // trade launches only where a real profit clears the road cost
   homesMonthly();
+  huntsMonthly();
   tunnelMonthly();
   vegMonthly();
   tradeMonthly();
@@ -5254,6 +5409,10 @@ function yearly(){
   // it happens tile by tile in the vegetation engine as seeds and rain allow
   vegYearly();
   graveyardYearly();
+  for(const st of sim.settlements){
+    if(st.razed||!st.threat)continue;
+    for(const k in st.threat){st.threat[k]=Math.floor(st.threat[k]*0.5);if(!st.threat[k])delete st.threat[k]}
+  }
   for(const st of sim.settlements){
     if(st.razed||!st.pen)continue;
     // upkeep is logs or rot
@@ -5711,6 +5870,7 @@ function render(dt){
   if(showEnt)for(const c of sim.corpses){
     if(c.x<vr.tx0-1||c.y<vr.ty0-1||c.x>vr.tx0+vr.cols||c.y>vr.ty0+vr.rows)continue;
     const stg=corpseStage(c);
+    if(c.bait){drawGlyphAt(ctx,'β','#c46a5a',c.x,c.y,evr);continue} // staked meat, waiting for a nose to find it
     const col=stg==='fresh'?'#a99f8a':stg==='ripe'?'#8f8776':stg==='rotten'?'#6f6a5f':'#55504a';
     drawGlyphAt(ctx,SPECIES[c.sp].g,col,c.x,c.y,evr);
     const gx=Math.round((c.x-evr.tx0)*px),gy=Math.round((c.y-evr.ty0)*px);
@@ -7031,6 +7191,14 @@ function renderPerson(id){
 function renderCorpse(id){
   const c=sim.corpses.find(x=>x.id===id);
   if(!c)return '<div class="sub">Nothing remains but a stain on the grass.</div>';
+  if(c.bait){
+    const bst=sim.settlements[c.baitSt];
+    let h2='<h2>β Staked bait</h2><div class="sub">'+esc(c.cause)+'</div>';
+    h2+='<div class="kv" style="margin-top:8px"><div class="k">Meat left</div><div class="v">'+Math.max(0,Math.round(c.mass))+'</div>';
+    if(bst&&bst.hunt)h2+='<div class="k">Quarry</div><div class="v">the '+esc(bst.hunt.sp.toLowerCase())+'s</div>';
+    h2+='</div><div class="sub" style="margin-top:8px;font-size:11px">Somewhere in the brush nearby, a hunter is very still. Every hungry nose in these hills can smell this.</div>';
+    return h2;
+  }
   const sp=SPECIES[c.sp],stg=corpseStage(c);
   const verdict={fresh:'good meat — safe for any eater',
     ripe:'turning — risky for weak stomachs, fine for a fox or a pig',
@@ -7100,6 +7268,11 @@ function renderSett(id){
   h+='<div class="k">Buildings</div><div class="v">'+st.houses+' houses · '+st.farms+' fields'+((st.stores||0)?' · '+st.stores+' storehouse'+(st.stores>1?'s':''):'')+(st.market?' · market':'')+(st.temple?' · temple':'')+(st.keep?' · keep':'')+(st.walls?' · walls':'')+'</div>';
   if(st.pen)h+='<div class="k">Pen</div><div class="v">a fenced pasture, timbers '+(st.pen.cond>0.66?'sound':st.pen.cond>0.33?'weathering':'rotting')+'</div>';
   if(st.lvLost&&!st.pen)h+='<div class="k">Herds</div><div class="v" style="color:#d9a05a">'+st.lvLost+' head taken by beasts; the town has no fence</div>';
+  if(st.hunt)h+='<div class="k">The hunt</div><div class="v">out against the '+esc(st.hunt.sp.toLowerCase())+'s ('+(st.hunt.kind==='cull'?'a cull, for what was taken':'for the larder')+') · '+(st.hunt.kills||0)+' taken'+(st.baitId?' · bait staked':'')+'</div>';
+  if(st.threat){
+    const th=Object.entries(st.threat).filter(en=>en[1]>0);
+    if(th.length)h+='<div class="k">Menaces</div><div class="v">'+th.map(en=>en[1]+' attacks by '+en[0].toLowerCase()+'s').join(', ')+'</div>';
+  }
   if(st.gy&&(st.gy.graves.length||st.gy.old)){
     const mon=st.gy.graves.filter(g2=>g2.w===-1).length;
     h+='<div class="k">Graveyard</div><div class="v">'+st.gy.graves.length+' graves'+(mon?', '+mon+' monuments':'')+(st.gy.old?', and '+st.gy.old+' stones beyond all memory':'')+'</div>';
