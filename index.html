@@ -964,6 +964,332 @@ function newSim(){
 </script>
 <script>
 'use strict';
+/* ============ LIVING VEGETATION ============
+   Every land tile is an ecological cell holding a real plant community:
+   a species, its biomass, the litter of its dead, the nutrients of its soil,
+   the seeds sleeping in the ground, and a heritable drought tolerance.
+   Growth is biology times environment. Succession is seeds plus conditions.
+   Nothing here is an event; the forest returns only if seeds and rain agree. */
+
+const PLANTS=[
+ {nm:'meadow grass', kind:'grass',tOpt:0.55,tTol:0.34,mOpt:0.55,mTol:0.30,r:0.085,maxB:0.35,fireRes:0.35,shade:0.2,flower:[1,2],ann:false},
+ {nm:'steppe grass', kind:'grass',tOpt:0.66,tTol:0.30,mOpt:0.30,mTol:0.22,r:0.070,maxB:0.24,fireRes:0.75,shade:0.2,flower:[1],ann:false},
+ {nm:'bramble',      kind:'shrub',tOpt:0.52,tTol:0.30,mOpt:0.48,mTol:0.26,r:0.040,maxB:0.55,fireRes:0.25,shade:0.45,flower:[1,2],ann:false},
+ {nm:'oak',          kind:'tree', tOpt:0.50,tTol:0.26,mOpt:0.60,mTol:0.24,r:0.016,maxB:1.00,fireRes:0.30,shade:0.85,flower:[2],ann:false},
+ {nm:'pine',         kind:'tree', tOpt:0.26,tTol:0.24,mOpt:0.52,mTol:0.28,r:0.013,maxB:0.90,fireRes:0.20,shade:0.75,flower:[2],ann:false},
+ {nm:'swamp reed',   kind:'reed', tOpt:0.55,tTol:0.30,mOpt:0.92,mTol:0.20,r:0.090,maxB:0.45,fireRes:0.15,shade:0.3,flower:[1,2],ann:false},
+ {nm:'desert scrub', kind:'scrub',tOpt:0.85,tTol:0.25,mOpt:0.12,mTol:0.14,r:0.020,maxB:0.15,fireRes:0.55,shade:0.1,flower:[0],ann:false},
+ {nm:'river willow', kind:'tree', tOpt:0.52,tTol:0.28,mOpt:0.78,mTol:0.20,r:0.030,maxB:0.75,fireRes:0.20,shade:0.6,flower:[0,1],ann:false},
+ {nm:'grain',        kind:'crop', tOpt:0.58,tTol:0.26,mOpt:0.55,mTol:0.24,r:0.110,maxB:0.50,fireRes:0.05,shade:0.1,flower:[2],ann:true}
+];
+const VSP_NONE=255,VSP_CROP=8;
+const vbit=s=>1<<s;
+
+function vegAlloc(){
+  const n=world.W*world.H;
+  world.veg=new Float32Array(n);
+  world.vsp=new Uint8Array(n).fill(VSP_NONE);
+  world.litter=new Float32Array(n);
+  world.soilN=new Float32Array(n);
+  world.seedB=new Uint16Array(n);
+  world.vgen=new Float32Array(n);
+  world.blight=new Uint8Array(n);
+  world.moistBase=Float32Array.from(world.moist);
+}
+function vegSpFor(b,y,m){
+  const lat=Math.abs(y-world.H/2)/(world.H/2);
+  if(b===B.FOREST)return 3;
+  if(b===B.TAIGA)return 4;
+  if(b===B.SWAMP)return 5;
+  if(b===B.DESERT)return 6;
+  if(b===B.GRASS||b===B.BEACH)return m<0.40?1:0;
+  if(b===B.SHRUB)return m<0.30?6:2;
+  if(b===B.TUNDRA||b===B.SNOW)return 1;
+  if(b===B.MOUNT)return lat>0.4?4:1;
+  return VSP_NONE;
+}
+function vegInit(){
+  vegAlloc();
+  const W=world.W,H=world.H;
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const i=y*W+x,b=world.biome[i];
+    if(isWater(b)||b===B.PEAK)continue;
+    const s=vegSpFor(b,y,world.moist[i]);
+    if(s===VSP_NONE)continue;
+    const P=PLANTS[s];
+    world.vsp[i]=s;
+    world.veg[i]=P.maxB*(0.5+rnd()*0.4);
+    world.litter[i]=P.maxB*0.15;
+    world.soilN[i]=clamp(0.25+world.moist[i]*0.5+(P.kind==='tree'?0.15:0)+(b===B.SWAMP?0.2:0),0.05,1);
+    world.seedB[i]|=vbit(s);
+    if(world.river[i]&&chance(0.3))world.seedB[i]|=vbit(7);
+  }
+  // seeds drift a little at the founding, so borders are not knife edges
+  for(let i=0;i<W*H;i++){
+    if(world.vsp[i]===VSP_NONE)continue;
+    const x=i%W,y=(i/W)|0;
+    for(let k=0;k<4;k++){
+      const qx=x+DX8[k],qy=y+DY8[k];
+      if(inb(qx,qy))world.seedB[qy*W+qx]|=vbit(world.vsp[i]);
+    }
+  }
+}
+
+/* climate at a tile, from latitude, season, altitude, and the sky right now */
+function vegTemp(y,e){
+  const lat=Math.abs(y-world.H/2)/(world.H/2);
+  const seasonT=[0.55,0.82,0.48,0.12][curSeason()];
+  const wx=sim.weather.type==='snow'?-0.08:sim.weather.type==='storm'?-0.03:0;
+  return clamp(seasonT-lat*0.52-Math.max(0,e)*0.32+wx,0,1);
+}
+function vegSuit(P,t,m,gene){
+  const st2=1-Math.pow((t-P.tOpt)/P.tTol,2);
+  const mo=clamp(P.mOpt-(gene||0)*0.10,0.05,0.98); // drought-adapted lines root deeper
+  // thirst kills far faster than wet feet: the wet side of the curve is forgiving
+  const dev=(m-mo)/(m>mo?P.mTol*2.4:P.mTol);
+  const sm=1-dev*dev;
+  return {t:Math.max(0,st2),m:Math.max(0,sm)};
+}
+
+/* the daily stripe: every cell breathes once a fortnight, staggered so each day costs little */
+const VEG_STRIDE=21;
+function vegDaily(){
+  if(!world.veg)return;
+  const W=world.W,H=world.H,n=W*H;
+  const dt=VEG_STRIDE;
+  const off=sim.day%VEG_STRIDE;
+  const season=curSeason();
+  const rain=sim.weather.type==='rain'?0.009:sim.weather.type==='storm'?0.014:sim.weather.type==='snow'?0.004:0;
+  const evap=0.0035+(season===1?0.0040:0)+(sim.drought?0.0045:0);
+  let dirty=false;
+  for(let i=off;i<n;i+=VEG_STRIDE){
+    const b=world.biome[i];
+    if(isWater(b)||b===B.PEAK)continue;
+    const x=i%W,y=(i/W)|0;
+    // --- water: rain falls, sun draws it back, the land pulls toward its nature ---
+    let m=world.moist[i];
+    m+=rain*dt*(sim.drought?0.35:1);
+    m-=evap*dt*(0.5+0.5*vegTemp(y,world.elev[i]));
+    m+=(world.moistBase[i]-m)*0.012*dt;
+    if(world.river[i]||b===B.LAKE||b===B.SWAMP)m=Math.max(m,world.moistBase[i]*0.9);
+    world.moist[i]=clamp(m,0.02,1);
+    // --- decomposition: the dead feed the soil, faster where warm and damp ---
+    if(world.litter[i]>0.001){
+      const dk=world.litter[i]*clamp(0.010*(0.3+vegTemp(y,world.elev[i]))*(0.4+m),0,0.06)*dt;
+      world.litter[i]-=dk;
+      world.soilN[i]=Math.min(1,world.soilN[i]+dk*0.55);
+    }
+    world.soilN[i]=Math.min(1,world.soilN[i]+0.00035*dt); // slow weathering of the rock beneath
+    let s=world.vsp[i];
+    // farm tiles carry the crop; the field is a plant community like any other
+    if(world.building[i]===BUILD.FARM&&s!==VSP_CROP){s=VSP_CROP;world.vsp[i]=s;world.veg[i]=Math.min(world.veg[i],0.06);world.seedB[i]|=vbit(VSP_CROP)}
+    if(world.building[i]!==BUILD.FARM&&s===VSP_CROP){
+      // an abandoned field: the crop stands one last season, then whatever sleeps in the soil takes over
+      world.vsp[i]=VSP_NONE;world.litter[i]+=world.veg[i];world.veg[i]=0;s=VSP_NONE;
+    }
+    // --- germination: bare ground remembers, and answers when conditions allow ---
+    if(s===VSP_NONE){
+      if(world.seedB[i]&&m>0.22){
+        const t=vegTemp(y,world.elev[i]);
+        let best=-1,bs=0.3;
+        for(let sp2=0;sp2<PLANTS.length;sp2++){
+          if(!(world.seedB[i]&vbit(sp2)))continue;
+          if(sp2===VSP_CROP)continue; // grain does not sow itself; it is a creature of the plow
+          const su=vegSuit(PLANTS[sp2],t,m,world.vgen[i]);
+          const sc=su.t*su.m;
+          if(sc>bs){bs=sc;best=sp2}
+        }
+        if(best>=0&&t>0.18){world.vsp[i]=best;world.veg[i]=0.02;s=best}
+      }
+      if(s===VSP_NONE)continue;
+    }
+    const P=PLANTS[s];
+    const t=vegTemp(y,world.elev[i]);
+    const su=vegSuit(P,t,m,world.vgen[i]);
+    // waterlogging: saturated ground drowns roots not built for it
+    const waterlog=(m>0.92&&P.kind!=='reed'&&P.nm!=='river willow')?0.4:0;
+    const nut=0.35+0.65*world.soilN[i];
+    let v=world.veg[i];
+    // --- growth: biology times environment, logistic to the species' stature ---
+    const grow=P.r*(v+0.025)*(1-v/P.maxB)*su.t*su.m*nut*dt*(world.blight[i]?0.3:1); // the rootstock and the seed let a stand climb back from almost nothing
+    if(grow>0){
+      v+=grow;
+      world.moist[i]=Math.max(0.02,world.moist[i]-grow*0.12);            // transpiration
+      world.soilN[i]=Math.max(0.02,world.soilN[i]-grow*(s===VSP_CROP?0.16:0.06)); // crops mine the soil hardest
+    }
+    // --- stress and senescence: drought and drowning wound; cold only puts the land to sleep ---
+    const dormant=t<0.14;
+    const stress=dormant?0:((1-su.m)*0.55+waterlog+(world.blight[i]?0.35:0));
+    const loss=v*((dormant?0.0006:0.0016)+0.020*Math.max(0,stress-0.30))*dt;
+    v-=loss;world.litter[i]+=loss;
+    // winter dieback for the soft kinds
+    if(season===3&&(P.kind==='grass'||P.kind==='crop'||P.kind==='reed')){
+      const die=v*(P.ann?0.5:0.14); // one fortnight's browning, not a massacre
+      v-=die;world.litter[i]+=die;
+    }
+    // --- selection: dry years cull the shallow-rooted, and their seed grows rarer ---
+    if(su.m<0.4&&loss>grow)world.vgen[i]=clamp(world.vgen[i]+(m<P.mOpt?0.0025:-0.0025)*dt,-1,1);
+    // --- reproduction: a thriving stand fills the ground beneath it with seed ---
+    if(v>0.45*P.maxB&&P.flower.indexOf(season)>=0)world.seedB[i]|=vbit(s);
+    // --- blight runs root to root while the weather favors it ---
+    if(world.blight[i]){
+      if(m<0.32||season===3||chance(0.06*dt/VEG_STRIDE*VEG_STRIDE)){world.blight[i]=0}
+      else for(let k=0;k<4;k++){
+        const qx=x+DX8[k],qy=y+DY8[k];
+        if(!inb(qx,qy))continue;
+        const qi=qy*W+qx;
+        if(!world.blight[qi]&&world.vsp[qi]===s&&world.moist[qi]>0.45&&chance(0.25))world.blight[qi]=1;
+      }
+    }
+    // --- succession: under a full stand, the seeds of taller things find their moment ---
+    if((P.kind==='grass'||P.kind==='shrub')&&v>0.72*P.maxB&&chance(0.05)){
+      for(const cand of(P.kind==='grass'?[2,3,4,7]:[3,4,7])){
+        if(!(world.seedB[i]&vbit(cand)))continue;
+        if(cand===7&&!world.river[i]&&!nearRiver1(x,y))continue;
+        const cs=vegSuit(PLANTS[cand],t,m,world.vgen[i]);
+        if(cs.t*cs.m>0.42){world.litter[i]+=v*0.5;world.vsp[i]=cand;v=0.06;break}
+      }
+    }
+    world.veg[i]=Math.max(0,v);
+    // --- the visible world follows the living one ---
+    const kind=PLANTS[world.vsp[i]]?PLANTS[world.vsp[i]].kind:'';
+    if(kind==='tree'&&world.veg[i]>0.55&&(b===B.GRASS||b===B.SHRUB)&&!world.cut[i]){
+      world.biome[i]=world.vsp[i]===4?B.TAIGA:B.FOREST;dirty=true;
+    }else if(kind==='tree'&&world.veg[i]<0.10&&(b===B.FOREST||b===B.TAIGA)){
+      world.biome[i]=B.SHRUB;dirty=true;
+    }else if(kind==='grass'){
+      if(world.veg[i]<0.05&&world.cut[i]===0){world.cut[i]=5;dirty=true}
+      else if(world.veg[i]>0.11&&world.cut[i]===5){world.cut[i]=0;dirty=true}
+    }
+  }
+  if(dirty)terrainDirty=true;
+}
+
+function nearRiver1(x,y){
+  for(let k=0;k<8;k++){const qx=x+DX8[k],qy=y+DY8[k];if(inb(qx,qy)&&world.river[idx(qx,qy)])return true}
+  return false;
+}
+
+/* monthly: the wind, the rivers, and the beasts carry seed farther than roots reach */
+function vegMonthly(){
+  if(!world.veg)return;
+  const W=world.W,n=W*world.H;
+  for(let t=0;t<420;t++){
+    const i=ri(0,n-1);
+    const s=world.vsp[i];
+    if(s===VSP_NONE||s===VSP_CROP)continue;
+    if(world.veg[i]<0.4*PLANTS[s].maxB)continue;
+    const x=i%W,y=(i/W)|0;
+    const R2=PLANTS[s].kind==='grass'?3:2;
+    const qx=clamp(x+ri(-R2,R2),0,W-1),qy=clamp(y+ri(-R2,R2),0,world.H-1);
+    world.seedB[idx(qx,qy)]|=vbit(s);
+    if(world.river[i]){ // the current takes seed downhill
+      let bx=x,by=y,be=world.elev[i];
+      for(let k=0;k<8;k++){const nx=x+DX8[k],ny=y+DY8[k];
+        if(inb(nx,ny)&&world.river[idx(nx,ny)]&&world.elev[idx(nx,ny)]<be){be=world.elev[idx(nx,ny)];bx=nx;by=ny}}
+      if(bx!==x||by!==y)world.seedB[idx(bx,by)]|=vbit(s);
+    }
+  }
+  // grazers carry seed in their coats and their dung
+  for(let t=0;t<Math.min(40,sim.animals.length);t++){
+    const a=sim.animals[ri(0,sim.animals.length-1)];
+    const sp=SPECIES[a.sp];
+    if(sp.pred||sp.water||sp.amph)continue;
+    const i=idx(a.x,a.y);
+    if(world.vsp[i]!==VSP_NONE&&world.vsp[i]!==VSP_CROP&&PLANTS[world.vsp[i]].kind==='grass')a._seed=world.vsp[i];
+    else if(a._seed!==undefined){world.seedB[i]|=vbit(a._seed);a._seed=undefined}
+  }
+  // blight: dense wet plantings invite it; the mechanism is host plus humidity, the dice only pick the day
+  for(const st of sim.settlements){
+    if(st.razed||st.farms<8)continue;
+    if(curSeason()===3)continue;
+    let wet=0,farmN=0;
+    for(const i of st.tiles)if(world.building[i]===BUILD.FARM){farmN++;wet+=world.moist[i]}
+    if(!farmN)continue;
+    wet/=farmN;
+    if(wet>0.60&&chance(0.02*(farmN/10))){
+      for(const i of st.tiles)if(world.building[i]===BUILD.FARM&&!world.blight[i]){
+        world.blight[i]=1;
+        if(!st._blY||curYear()-st._blY>2){
+          st._blY=curYear();
+          logEvent('calamity','Blight creeps through the wet fields of '+st.nm+'; the grain blackens on the stalk.',st.x,st.y,{sett:st.id},
+            {why:{fieldMoisture:Math.round(wet*100)/100,fields:farmN},cause:'a warm wet season over dense plantings'});
+        }
+        break;
+      }
+    }
+  }
+  // crop health per settlement: the granary reads the fields as they truly stand
+  for(const st of sim.settlements){
+    if(st.razed)continue;
+    let sum=0,nF=0;
+    for(const i of st.tiles)if(world.building[i]===BUILD.FARM){
+      const y2=(i/W)|0;
+      const su=vegSuit(PLANTS[VSP_CROP],vegTemp(y2,world.elev[i]),world.moist[i],world.vgen[i]);
+      sum+=su.t*su.m*(0.35+0.65*world.soilN[i])*(world.blight[i]?0.35:1);nF++;
+    }
+    st._cropH=nF?clamp(0.35+sum/nF*1.15,0.35,1.4):1;
+  }
+}
+
+/* yearly: the census of the green world, taken from the world itself */
+function vegYearly(){
+  if(!world.veg)return;
+  const n=world.W*world.H;
+  let total=0;const cnt=new Array(PLANTS.length).fill(0);
+  for(let i=0;i<n;i++){
+    total+=world.veg[i];
+    if(world.vsp[i]!==VSP_NONE)cnt[world.vsp[i]]++;
+  }
+  const s=sim.stats;
+  if(!s.veg)s.veg=[];
+  s.veg.push(Math.round(total));
+  while(s.veg.length>s.yr.length)s.veg.shift();
+  if(!sim._vegCnt)sim._vegCnt=cnt.slice();
+  for(let sp2=0;sp2<PLANTS.length;sp2++){
+    if(sp2===VSP_CROP)continue;
+    if(sim._vegCnt[sp2]>40&&cnt[sp2]===0)
+      logEvent('misc','The last stands of '+PLANTS[sp2].nm+' have vanished from '+world.name+'.',-1,-1,undefined,
+        {cause:'a long decline of ground where it could grow'});
+  }
+  sim._vegCnt=cnt.slice();
+}
+
+/* save helpers */
+function vegSer(){
+  if(!world.veg)return null;
+  return {veg:b64FromBuf(world.veg.buffer),vsp:b64FromBuf(world.vsp.buffer),litter:b64FromBuf(world.litter.buffer),
+    soilN:b64FromBuf(world.soilN.buffer),seedB:b64FromBuf(world.seedB.buffer),vgen:b64FromBuf(world.vgen.buffer),
+    blight:b64FromBuf(world.blight.buffer),moistBase:b64FromBuf(world.moistBase.buffer),moist:b64FromBuf(world.moist.buffer)};
+}
+function vegMoistFromBiome(){
+  // older saves never kept the soil's water; read a fair value back off the land itself
+  for(let i=0;i<world.W*world.H;i++){
+    const b=world.biome[i];
+    world.moist[i]=b===B.SWAMP?0.85:b===B.FOREST?0.62:b===B.TAIGA?0.55:b===B.GRASS?0.50:b===B.SHRUB?0.30:b===B.DESERT?0.08:b===B.TUNDRA?0.40:b===B.LAKE?1:0.35;
+    if(world.river[i])world.moist[i]=Math.max(world.moist[i],0.7);
+  }
+}
+function vegDeser(d){
+  if(!d){
+    let dryAll=true;
+    for(let i=0;i<Math.min(2000,world.moist.length);i++)if(world.moist[i]>0.01){dryAll=false;break}
+    if(dryAll)vegMoistFromBiome();
+    vegInit();return;
+  }
+  world.moist=new Float32Array(bufFromB64(d.moist));
+  world.veg=new Float32Array(bufFromB64(d.veg));
+  world.vsp=new Uint8Array(bufFromB64(d.vsp));
+  world.litter=new Float32Array(bufFromB64(d.litter));
+  world.soilN=new Float32Array(bufFromB64(d.soilN));
+  world.seedB=new Uint16Array(bufFromB64(d.seedB));
+  world.vgen=new Float32Array(bufFromB64(d.vgen));
+  world.blight=new Uint8Array(bufFromB64(d.blight));
+  world.moistBase=new Float32Array(bufFromB64(d.moistBase));
+}
+</script>
+<script>
+'use strict';
 const WORM_NAMES=["ADEL","ADER","ADFL","ADFR","ADLL","ADLR","AFDL","AFDR","ALML","ALMR","ALNL","ALNR","AQR","ASEL","ASER","ASGL","ASGR","ASHL","ASHR","ASIL","ASIR","ASJL","ASJR","ASKL","ASKR","AVM","AWAL","AWAR","AWBL","AWBR","AWCL","AWCR","BAGL","BAGR","CEPDL","CEPDR","CEPVL","CEPVR","FLPL","FLPR","IL2DL","IL2DR","IL2L","IL2R","IL2VL","IL2VR","OLLL","OLLR","OLQDL","OLQDR","OLQVL","OLQVR","PDEL","PDER","PHAL","PHAR","PHBL","PHBR","PHCL","PHCR","PLML","PLMR","PLNL","PLNR","PQR","PVDL","PVDR","PVM","SDQL","SDQR","URBL","URBR","URXL","URXR","URYDL","URYDR","URYVL","URYVR","ADAL","ADAR","AIAL","AIAR","AIBL","AIBR","AIML","AIMR","AINL","AINR","AIYL","AIYR","AIZL","AIZR","ALA","AUAL","AUAR","AVAL","AVAR","AVBL","AVBR","AVDL","AVDR","AVEL","AVER","AVFL","AVFR","AVG","AVHL","AVHR","AVJL","AVJR","AVKL","AVKR","AVL","BDUL","BDUR","DVA","DVB","DVC","I1L","I1R","I2L","I2R","I3","I4","I5","I6","LUAL","LUAR","PVCL","PVCR","PVNL","PVNR","PVPL","PVPR","PVQL","PVQR","PVR","PVT","PVWL","PVWR","RIAL","RIAR","RIBL","RIBR","RICL","RICR","RIFL","RIFR","RIGL","RIGR","RIH","RIML","RIMR","RIPL","RIPR","RIR","RIS","RIVL","RIVR","RMGL","RMGR","SAADL","SAADR","SAAVL","SAAVR","SIADL","SIADR","SIAVL","SIAVR","SIBDL","SIBDR","SIBVL","SIBVR","AS01","AS02","AS03","AS04","AS05","AS06","AS07","AS08","AS09","AS10","AS11","DA01","DA02","DA03","DA04","DA05","DA06","DA07","DA08","DA09","DB01","DB02","DB03","DB04","DB05","DB06","DB07","DD01","DD02","DD03","DD04","DD05","DD06","HSNL","HSNR","IL1DL","IL1DR","IL1L","IL1R","IL1VL","IL1VR","M1","M2L","M2R","M3L","M3R","M4","M5","MCL","MCR","MI","NSML","NSMR","PDA","PDB","RID","RMDDL","RMDDR","RMDL","RMDR","RMDVL","RMDVR","RMED","RMEL","RMER","RMEV","RMFL","RMFR","RMHL","RMHR","SABD","SABVL","SABVR","SMBDL","SMBDR","SMBVL","SMBVR","SMDDL","SMDDR","SMDVL","SMDVR","URADL","URADR","URAVL","URAVR","VA01","VA02","VA03","VA04","VA05","VA06","VA07","VA08","VA09","VA10","VA11","VA12","VB01","VB02","VB03","VB04","VB05","VB06","VB07","VB08","VB09","VB10","VB11","VC01","VC02","VC03","VC04","VC05","VC06","VD01","VD02","VD03","VD04","VD05","VD06","VD07","VD08","VD09","VD10","VD11","VD12","VD13"];
 const WORM_CLS="000000000000000000000000000000000000000000000000000000000000000000000000000000111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111112222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222";
 const WORM_GABA=[112,116,156,200,201,202,203,204,205,235,236,237,238,287,288,289,290,291,292,293,294,295,296,297,298,299];
@@ -2846,6 +3172,7 @@ function tick(){
   sim.day++;
   pathBudget=6; // A* calls allowed this tick (visual trips)
   updateWeather();
+  vegDaily();
   updateFires();
   updateCorpses();
   rebuildAnimalGrid();
@@ -2906,6 +3233,14 @@ function updateFires(){
       if(b===B.FOREST)world.biome[i]=B.GRASS;
       else if(b===B.TAIGA)world.biome[i]=B.TUNDRA;
       if(world.cut[i]!==4)world.cut[i]=3;
+      if(world.veg){
+        // the fire ate real fuel; the fire-hardened kinds keep their roots, and the ash feeds the soil
+        const P2=world.vsp[i]!==255?PLANTS[world.vsp[i]]:null;
+        world.veg[i]*=P2?P2.fireRes*0.3:0.05;
+        world.soilN[i]=Math.min(1,world.soilN[i]+0.04+world.litter[i]*0.25);
+        world.litter[i]=0;
+        world.blight[i]=0; // flame is the one cure blight respects
+      }
       world.variant[i]=Math.floor(rnd()*4);
       delete sim.fires[i];terrainDirty=true;
       continue;
@@ -2921,6 +3256,12 @@ function updateFires(){
       const qb=world.biome[qi];
       let flam=0;
       if(world.building[qi])flam=0.10;
+      else if(world.veg){
+        // flammability is fuel that is actually standing there, dried by the actual soil
+        const fuel=world.veg[qi]+world.litter[qi]*0.7;
+        const dry=clamp(1-world.moist[qi],0,1);
+        flam=clamp(fuel*dry*0.55,0,0.34)*(wet?0.15:1);
+      }
       else if(qb===B.FOREST||qb===B.TAIGA)flam=wet?0.05:0.28;
       else if(qb===B.SHRUB)flam=wet?0.02:0.12;
       else if(qb===B.GRASS)flam=wet?0.01:0.05;
@@ -3006,7 +3347,7 @@ function updateSettlements(){
     const irrig=(facKnows(f,'irrigation')?1.28:1)*(st.hasCanal?1.15:1);
     const wxMul=sim.drought?0.55:(sim.weather.type==='rain'?1.08:1);
     const farmers=c.farmer||0;
-    const farmEff=Math.min(st.farms,farmers/1.2)*7.4*SEASON_FARM[s]*irrig*wxMul
+    const farmEff=Math.min(st.farms,farmers/1.2)*7.4*SEASON_FARM[s]*irrig*wxMul*(st._cropH||1)
       +(c.laborer||0)*0.9+st.popC*0.12; // gleaning and gardens fold into grain
     st.stock.wood+=(c.woodcutter||0)*1.1*(st._forestMod??1);
     st.stock.stone+=(c.miner||0)*0.75;
@@ -3226,6 +3567,7 @@ function resolveMission(p){
           if((qb===B.FOREST||qb===B.TAIGA)&&!world.building[qi]){
             world.biome[qi]=qb===B.TAIGA?B.TUNDRA:B.GRASS;
             world.cut[qi]=1;world.variant[qi]=Math.floor(rnd()*4);
+            if(world.veg){world.litter[qi]+=world.veg[qi]*0.4;world.veg[qi]*=0.15} // the crown becomes slash, the stump holds on
             st.stock.wood+=4;terrainDirty=true;break;
           }
         }
@@ -3374,6 +3716,7 @@ function updateAnimals(){
         const parent=parents[Math.floor(rnd()*parents.length)];
         if(!parent)continue;
         if(world.brains&&sp.pred&&(parent.hun||0)>0.6)continue; // starving predators do not breed
+        if(!sp.pred&&!sp.water&&!sp.amph&&(parent.hun||0)>0.7)continue; // a starved herd raises no young: thin pasture means few births
         const kid={id:sim.nextId++,sp:s,x:parent.x,y:parent.y,rx:parent.x,ry:parent.y,age:0,path:null,pi:0,hp:1};
         kid.genes=mutateGenes(parent.genes||sp.g0);kid.gen=(parent.gen||0)+1; // heredity with mutation, in every mode: selection does the rest
         if(parent.dom!==undefined)kid.dom=parent.dom; // herds breed within the fold
@@ -3496,11 +3839,12 @@ function stepAnimal(a,dx,dy,fleeing){
    No calendar decides the run. The urge accumulates with age and the cooling water,
    the gravel of a headwater ends it, and the run costs the fish its life. */
 function salmonUpdate(a,sp,dead){
+  if((a.id+sim.day)%2){if(a.act==='holding in the current'&&chance(0.2)){}return} // a fish thinks in half-time; the river does not hurry
   if(a.genes&&!(a.genes instanceof Float32Array))a.genes=Float32Array.from(a.genes);
   const g=a.genes||DEFG;
-  a.hun=Math.min(1,(a.hun||0)+0.006*g[1]);
+  a.hun=Math.min(1,(a.hun||0)+0.012*g[1]);
   const mature=a.age>600;
-  a.run=clamp((a.run||0)+(mature?(curSeason()===2?0.02:0.002):0)*g[2],0,1);
+  a.run=clamp((a.run||0)+(mature?(curSeason()===2?0.04:0.004):0)*g[2],0,1);
   // a spent fish drifts, weakens, and feeds the river
   if(a.spawned){
     a.act='drifting spent in the current';
@@ -3570,13 +3914,14 @@ function salmonUpdate(a,sp,dead){
    Its hunger grows slowly and it can wait for weeks. Everything that
    comes down to drink is prey, and sometimes that includes people. */
 function crocUpdate(a,sp,dead){
+  if((a.id+sim.day)%2&&a.act&&a.act.indexOf('dragging')<0)return; // patience is the whole strategy
   if(a.genes&&!(a.genes instanceof Float32Array))a.genes=Float32Array.from(a.genes);
   const g=a.genes||DEFG;
   if(a.sickD&&--a.sickD<0)a.sickD=0;
   const cold=curSeason()===3||sim.weather.type==='snow';
   const farFromSun=Math.abs(a.y-world.H/2)/(world.H/2)>0.55;
   if(cold&&farFromSun){a.act='torpid in the mud, waiting out the cold';a.sense='';a.think='cold 1.0 > all else';return}
-  a.hun=Math.min(1,(a.hun||0)+0.004*g[1]);
+  a.hun=Math.min(1,(a.hun||0)+0.005*g[1]);
   const here=idx(a.x,a.y);
   const inWater=isDrinkable(here);
   const rival=nearAnimal(a.x,a.y,3,o=>o!==a&&SPECIES[o.sp].amph);
@@ -3694,7 +4039,7 @@ function instinctAnimalUpdate(a,sp,dead){
     }
   }
   const b0=world.biome[idx(a.x,a.y)];
-  const grazeHere=!sp.pred&&(b0===B.GRASS||b0===B.SHRUB||b0===B.FOREST||b0===B.TUNDRA)&&world.cut[idx(a.x,a.y)]!==5;
+  const grazeHere=!sp.pred&&(b0===B.GRASS||b0===B.SHRUB||b0===B.FOREST||b0===B.TUNDRA)&&(world.veg?world.veg[idx(a.x,a.y)]>0.05:world.cut[idx(a.x,a.y)]!==5);
   let prey=null;
   if(sp.pred&&a.hun>0.3){
     prey=nearestPreyAnimal(a.x,a.y,6);
@@ -3794,8 +4139,16 @@ function instinctAnimalUpdate(a,sp,dead){
           }else{a.act='hunting for a trail';const k=ri(0,7);stepAnimal(a,DX8[k],DY8[k],false)}
         }
       }else if(grazeHere){
-        a.hun*=0.45;a.act='grazing';
-        if(chance(0.25)){world.cut[idx(a.x,a.y)]=5;terrainDirty=true} // the grass is really eaten
+        const gi=idx(a.x,a.y);
+        if(world.veg){
+          // the meal is exactly what the ground holds; thin pasture feeds thinly
+          const bite=Math.min(0.035,Math.max(0,world.veg[gi]-0.02));
+          world.veg[gi]-=bite;
+          a.hun=Math.max(0,a.hun-bite*13);
+          world.soilN[gi]=Math.min(1,world.soilN[gi]+0.0025); // dung pays the grass back a little
+          if(world.veg[gi]<0.05&&world.cut[gi]===0){world.cut[gi]=5;terrainDirty=true}
+          a.act='grazing';
+        }else{a.hun*=0.45;a.act='grazing'}
       }
       else{
         a.act='seeking pasture';
@@ -3804,7 +4157,8 @@ function instinctAnimalUpdate(a,sp,dead){
           const qx=a.x+DX8[k],qy=a.y+DY8[k];
           if(!inb(qx,qy))continue;
           const qi=idx(qx,qy),qb=world.biome[qi];
-          if((qb===B.GRASS||qb===B.SHRUB||qb===B.FOREST)&&world.cut[qi]!==5)done=stepAnimal(a,DX8[k],DY8[k],false);
+          const fed=world.veg?world.veg[qi]>0.06:world.cut[qi]!==5;
+          if((qb===B.GRASS||qb===B.SHRUB||qb===B.FOREST)&&fed)done=stepAnimal(a,DX8[k],DY8[k],false);
         }
         if(!done){const k=ri(0,7);stepAnimal(a,DX8[k],DY8[k],false)}
       }
@@ -4281,6 +4635,7 @@ function monthly(){
   }
   // trade launches only where a real profit clears the road cost
   homesMonthly();
+  vegMonthly();
   tradeMonthly();
   if(typeof knowledgeMonthly==='function')knowledgeMonthly();
   for(const f of sim.factions){
@@ -4443,7 +4798,9 @@ function quarterly(){
 function yearly(){
   const y=curYear();
   sim.lastYB=sim.yb||0;sim.lastYD=sim.yd||0;sim.yb=0;sim.yd=0;sim.yfever=0;
-  // the forest slowly takes back what was cut, spreading in from standing trees
+  // the green world takes its own census; regrowth is no longer scripted here,
+  // it happens tile by tile in the vegetation engine as seeds and rain allow
+  vegYearly();
   {
     const W=world.W;
     for(let i=0;i<W*world.H;i++){
@@ -4453,26 +4810,8 @@ function yearly(){
         if(world.settleId[i]<0&&rnd()<0.03){world.cut[i]=0;terrainDirty=true}
         continue;
       }
-      if(scar===2)continue; // dry lakebeds refill below, not regrow
-      if(scar===5){ // grazed bare: regrowth paced by the land's own moisture
-        const m=world.moist[i]||0.5;
-        if(rnd()<0.25+m*0.55){world.cut[i]=0;terrainDirty=true}
-        continue;
-      }
-      if(world.settleId[i]>=0)continue;
-      const x=i%W,yy=(i/W)|0;
-      let adjF=0,adjT=0;
-      for(let k=0;k<4;k++){
-        const qx=x+DX8[k],qy=yy+DY8[k];
-        if(!inb(qx,qy))continue;
-        const b=world.biome[qy*W+qx];
-        if(b===B.FOREST)adjF++;else if(b===B.TAIGA)adjT++;
-      }
-      const pGrow=(adjF+adjT)?0.10:0.015;
-      if(rnd()<pGrow){
-        world.biome[i]=adjT>adjF?B.TAIGA:B.FOREST;
-        world.cut[i]=0;world.variant[i]=Math.floor(rnd()*4);
-        terrainDirty=true;
+      if(scar===1&&world.settleId[i]<0&&world.veg&&world.veg[i]>0.3){ // the stumps vanish under new growth
+        world.cut[i]=0;terrainDirty=true;
       }
     }
   }
@@ -4871,6 +5210,24 @@ function render(dt){
   const sy0=Math.round((vr.ty0-cam.y)*px+cv.height/2);
   ctx.fillStyle='#0e0b09';ctx.fillRect(0,0,cv.width,cv.height);
   ctx.drawImage(terrCv,sx0,sy0);
+  // ecological lenses: tints over the same living state the engine reads; looking changes nothing
+  if(window.vegView&&world.veg){
+    for(let ry=0;ry<vr.rows;ry++)for(let rx=0;rx<vr.cols;rx++){
+      const tx=vr.tx0+rx,ty=vr.ty0+ry;
+      if(!inb(tx,ty))continue;
+      const i=idx(tx,ty);
+      const b=world.biome[i];
+      if(isWater(b)&&window.vegView!==3)continue;
+      let al=0,col='0,0,0';
+      if(window.vegView===1){al=Math.min(0.55,world.veg[i]*0.6);col='110,190,80'}
+      else if(window.vegView===2){al=Math.min(0.55,world.soilN[i]*0.55);col='170,120,60'}
+      else if(window.vegView===3){al=Math.min(0.55,world.moist[i]*0.5);col='80,140,210'}
+      if(al>0.02){
+        ctx.fillStyle='rgba('+col+','+al.toFixed(2)+')';
+        ctx.fillRect(sx0+rx*px,sy0+ry*px,px,px);
+      }
+    }
+  }
   // world→screen for entities: reuse vr but with screen offset
   const evr={tx0:vr.tx0-sx0/px,ty0:vr.ty0-sy0/px,cell:vr.cell};
   ensureAtlas(vr.cell);
@@ -5674,6 +6031,30 @@ function obsNatureMenu(){
   return h;
 }
 function obsVegetation(){
+  let vh='';
+  if(typeof PLANTS!=='undefined'&&world.veg){
+    // the living census: species, ground held, biomass, blight, all read off the cells themselves
+    const cnt=new Array(PLANTS.length).fill(0),bio2=new Array(PLANTS.length).fill(0);
+    let blighted=0,bare=0,landT=0;
+    for(let i=0;i<world.vsp.length;i++){
+      const b2=world.biome[i];
+      if(b2===B.DEEP||b2===B.OCEAN||b2===B.LAKE||b2===B.PEAK)continue;
+      landT++;
+      if(world.blight[i])blighted++;
+      const s2=world.vsp[i];
+      if(s2===255){bare++;continue}
+      cnt[s2]++;bio2[s2]+=world.veg[i];
+    }
+    vh+='<div class="obsK">Plant communities</div><table class="t"><tr><td>species</td><td>ground held</td><td>biomass</td></tr>';
+    for(let s2=0;s2<PLANTS.length;s2++){
+      if(!cnt[s2])continue;
+      vh+='<tr><td>'+PLANTS[s2].nm+(s2===8?' (crop)':'')+'</td><td>'+cnt[s2].toLocaleString()+' tiles</td><td>'+Math.round(bio2[s2]).toLocaleString()+'</td></tr>';
+    }
+    vh+='</table>';
+    vh+='<div class="kv"><div class="k">Bare ground</div><div class="v">'+bare.toLocaleString()+' tiles'+(bare?' (the seed banks remember)':'')+'</div>';
+    vh+='<div class="k">Blighted</div><div class="v">'+blighted.toLocaleString()+' tiles</div></div>';
+    vh+='<div class="sub" style="font-size:11px">simulated at plant-community resolution: every land tile is a living cell with species, biomass, litter, soil water, nutrients, a seed bank, and a locally selected drought line; press V on the map for the ecological lenses</div>';
+  }
   let forest=0,land=0,stump=0,grazed=0,burn=0,farm=0,berry=0;
   for(let i=0;i<world.biome.length;i++){
     const b=world.biome[i];
@@ -5693,7 +6074,8 @@ function obsVegetation(){
   h+=obsNum('Farmland',obsFmt(farm),'');
   h+=obsNum('Berry thickets',obsFmt(berry),'');
   h+='</div>';
-  h+='<div class="sub" style="font-size:11px;margin-top:6px">Felled trees really leave the map and grow back from standing edges; grazed grass returns at the pace of the local moisture.</div>';
+  h+=vh;
+  h+='<div class="sub" style="font-size:11px;margin-top:6px">Felled trees really leave the map; grazers eat real biomass; the forest returns only where seeds, soil, and rain agree.</div>';
   return h;
 }
 function obsWater(){
@@ -5997,6 +6379,23 @@ function renderTile(x,y){
   const bld=world.building[i];
   if(bld)h+='<div class="kv"><div class="k">Structure</div><div class="v">'+BUILD_DEF[bld].name+'</div></div>';
   if(world.resource[i])h+='<div class="kv"><div class="k">Resource</div><div class="v">'+RES_DEF[world.resource[i]].name+'</div></div>';
+  if(world.veg&&!isWater(b)&&b!==B.PEAK){
+    const s2=world.vsp[i];
+    h+='<h3>The living ground</h3><div class="kv">';
+    if(s2!==255){
+      const P=PLANTS[s2];
+      h+='<div class="k">Community</div><div class="v">'+P.nm+(world.blight[i]?' <span style="color:#d9a05a">· blighted</span>':'')+'</div>';
+      h+='<div class="k">Stand</div><div class="v">'+Math.round(world.veg[i]/P.maxB*100)+'% of a full '+P.kind+' stand</div>';
+    }else h+='<div class="k">Community</div><div class="v">bare ground'+(world.seedB[i]?', but the soil remembers':'')+'</div>';
+    h+='<div class="k">Soil water</div><div class="v">'+Math.round(world.moist[i]*100)+'%</div>';
+    h+='<div class="k">Nutrients</div><div class="v">'+Math.round(world.soilN[i]*100)+'%</div>';
+    if(world.litter[i]>0.02)h+='<div class="k">Litter</div><div class="v">'+Math.round(world.litter[i]*100)/100+' of dead matter, feeding the soil</div>';
+    const gv=world.vgen[i];
+    if(Math.abs(gv)>0.08)h+='<div class="k">Local line</div><div class="v">'+(gv>0?'drought-hardened by selection ('+Math.round(gv*100)+'%)':'moisture-loving ('+Math.round(-gv*100)+'%)')+'</div>';
+    const bank=[];for(let q=0;q<PLANTS.length;q++)if(world.seedB[i]&(1<<q))bank.push(PLANTS[q].nm);
+    if(bank.length)h+='<div class="k">Seed bank</div><div class="v">'+bank.join(', ')+'</div>';
+    h+='</div>';
+  }
   const sid=world.settleId[i],tid=world.terrId[i];
   if(sid>=0&&sim.settlements[sid]&&!sim.settlements[sid].razed)h+='<h3>Settlement</h3>'+L('sett',sid,sim.settlements[sid].nm);
   else if(tid>=0&&sim.settlements[tid]&&!sim.settlements[tid].razed){
@@ -6354,6 +6753,7 @@ function renderStats(){
   h+='<div><div class="statnum">'+sim.events.length+'</div><div class="statlab">Chronicle entries</div></div>';
   h+='</div>';
   h+='<h3>Population over time</h3><canvas class="chart" id="chartPop" width="640" height="220"></canvas>';
+  if(sim.stats.veg&&sim.stats.veg.length>1)h+='<h3>Living biomass over time</h3><canvas class="chart" id="chartVeg" width="640" height="180"></canvas>';
   h+='<h3>Realms over time</h3><canvas class="chart" id="chartFac" width="640" height="220"></canvas>';
   if(world.brains)h+='<h3>Neural evolution: circuit gain by lineage</h3>'+
     '<canvas class="chart" id="chartEvo" width="640" height="180"></canvas>'+
@@ -6369,6 +6769,8 @@ function drawCharts(){
   drawLine($('#chartFac'),series,s.yr);
   const ce=$('#chartEvo');
   if(ce)drawLine(ce,[{data:s.evoPrey||[],color:'#7f9150'},{data:s.evoPred||[],color:'#e0455a'}],s.yr);
+  const cvg=$('#chartVeg');
+  if(cvg)drawLine(cvg,[{data:s.veg||[],color:'#7f9150'}],s.yr);
 }
 function drawLine(cnv,series,xs){
   if(!cnv)return;
@@ -6585,6 +6987,10 @@ addEventListener('keydown',e=>{
   else if(k==='e'||k==='E'){toggleAvatar()}
   else if(k==='t'||k==='T'){ui.labels=!ui.labels}
   else if(k==='r'||k==='R'){toggleRoads(!ui.showRoads)}
+  else if(k==='v'||k==='V'){
+    window.vegView=((window.vegView||0)+1)%4;
+    toast('Lens: '+['the world as it looks','vegetation biomass','soil nutrients','soil moisture'][window.vegView]+'.');
+  }
   else if(k==='h'||k==='H'){$('#side').classList.remove('hidden');mmPos();ui.obsSec='chronicle';ui.setTab('history')}
   else if(k==='f'||k==='F'){
     if(sel&&sel.type==='person')cam.follow={type:'person',id:sel.id};
@@ -6801,6 +7207,7 @@ function saveString(){
     elevQ:b64FromBuf(new Uint8Array([...world.elev].map(v=>clamp(Math.round((v+1)*127),0,255))).buffer),
     brains:world.brains?1:0,pro:world.pro?1:0,
     cultures:CULTURES,
+    vege:vegSer(),
     sim:{day:sim.day,nextId:sim.nextId,people:[...sim.people.values()],souls:soulsArr,
       animals:sim.animals.map(a=>{const{brain,genes,...rest}=a;if(genes)rest.genes=Array.from(genes);return rest}),
       ships:sim.ships,relics:sim.relics,eras:sim.eras,books:sim.books,beast:sim.beast,corpses:sim.corpses,
@@ -6856,6 +7263,7 @@ function loadString(str){
   tlBg=null;
   world.brains=!!d.brains;
   world.pro=!!d.pro;
+  vegDeser(d.vege||null);
   if(world.brains)wormInit();
   for(const f of sim.factions)if(!f.wars)f.wars={};
   for(const st of sim.settlements){if(st.rad===undefined)st.rad=5;if(!st.canals)st.canals=[];if(st.hasCanal===undefined)st.hasCanal=false;
@@ -6906,6 +7314,7 @@ function bootWorld(seedStr,W,H,histYears,brains,pro){
   setTimeout(()=>{
     newSim();
     generateWorld(seedStr,W,H,(t)=>setP(0.15,t));
+    vegInit();
     world.brains=!!brains;
     world.pro=!!pro;
     if(world.brains)wormInit();
