@@ -491,13 +491,14 @@ function logEvent(type,text,x,y,ids,meta){
   }
   sim.events.push(ev);
   if(sim.evMap)sim.evMap.set(ev.id,ev);
-  if(sim.events.length>5200){ // prune oldest minor events
+  const evCap=(world&&world.best)?20000:5200; // the best world prunes almost nothing
+  if(sim.events.length>evCap){ // prune oldest minor events
     const keep=[];let dropped=0;
     for(const e of sim.events){
       if(dropped<800&&(e.type==='life'||e.type==='misc')){dropped++;continue}
       keep.push(e);
     }
-    sim.events=keep.slice(-4800);
+    sim.events=keep.slice(-(evCap-400));
     rebuildEvMap();
   }
   ui.tick(ev);
@@ -520,7 +521,7 @@ function newPerson(o){
 function fullName(p){return p.nm+' '+p.sur}
 function ageOf(p){return Math.floor((sim.day-p.born)/DAYS_Y)}
 function getP(id){return sim.people.get(id)||sim.souls.get(id)||null}
-function bio(p,text){p.bio.push({d:sim.day,t:text});if(p.bio.length>44)p.bio.shift()}
+function bio(p,text){p.bio.push({d:sim.day,t:text});if(p.bio.length>(world&&world.best?160:44))p.bio.shift()}
 function addDist(p,n,why){p.dist+=n;if(!p.notable&&p.dist>=6){p.notable=true}if(why)bio(p,why)}
 
 /* ============ WORLD GENERATION ============ */
@@ -2777,7 +2778,8 @@ function remember(p,kind,imp,facId,pid){
   if(pid!==undefined)m.p=pid;
   p.mem.push(m);
   p.mem.sort((a,b)=>b.imp-a.imp);
-  if(p.mem.length>8)p.mem.length=8;
+  const memCap=(typeof world!=='undefined'&&world&&world.best)?16:8;
+  if(p.mem.length>memCap)p.mem.length=memCap;
 }
 function witnessSettlement(st,kind,imp,facId){
   for(const p of sim.people.values())
@@ -2826,7 +2828,7 @@ function edgeAdd(p,q,t,s){
   const add=(a,b)=>{
     const es=edgesOf(a);
     for(const e of es)if(e.id===b.id&&e.t===t){e.s=clamp(Math.max(e.s,s)+0.25,0,3);return e}
-    if(es.length>=10){
+    if(es.length>=((typeof world!=='undefined'&&world&&world.best)?16:10)){
       let wi=0;for(let i=1;i<es.length;i++)if(es[i].s<es[wi].s)wi=i;
       if(es[wi].s>=s)return null;
       es.splice(wi,1);
@@ -3502,7 +3504,7 @@ function maybeStartTrip(p){
     p.pi=0;
     return;
   }
-  if(sim.people.size>1800)return; // LOD: past this scale the walking is theatre the eye cannot follow
+  if(!world.best&&sim.people.size>1800)return; // LOD: past this scale the walking is theatre the eye cannot follow; in the best world every soul walks
   if(!chance(0.12))return;
   // choose a destination by profession
   let target=null,r=10;
@@ -6474,6 +6476,33 @@ function renderPerson(id){
     if(p.skills&&p.skills.length)h+='<div class="kv"><div class="k">Knows</div><div class="v">'+p.skills.map(esc).join(', ')+'</div></div>';
     if(p.wealth&&p.wealth>=1)h+='<div class="kv"><div class="k">Coin</div><div class="v">'+Math.round(p.wealth)+'</div></div>';
   }
+  // what this soul carries: witnessed wounds, and the tales handed down
+  if(p.mem&&p.mem.length){
+    const MEMTXT={famine:'hunger gripping the home',conquest:'the home falling to a conqueror',razing:'the home burned to the ground','friend-slain':'a dear friend cut down','debt-shame':'the shame of a pressed debt',plague:'the plague in the streets'};
+    h+='<h3>Memory</h3><div class="bio">';
+    for(const m of p.mem){
+      const told=String(m.k).indexOf('told-')===0;
+      const kk=told?String(m.k).slice(5):m.k;
+      let t=MEMTXT[kk]||kk;
+      if(told)t='a family tale of '+t;
+      if(m.p!==undefined){const q=getP(m.p);if(q)t+=': '+L('person',m.p,q.nm+' '+q.sur+' ☠')}
+      if(m.fac!==undefined&&sim.factions[m.fac])t+=', and the blame rests on '+L('fac',m.fac,facTitle(sim.factions[m.fac]));
+      h+='<div><span class="y" style="color:var(--faint)">Y'+Math.floor(m.d/DAYS_Y)+'</span> '+t+' <span class="sub">(weight '+(Math.round(m.imp*100)/100)+')</span></div>';
+    }
+    h+='</div>';
+  }
+  // the web this soul stands in
+  if(p.frs&&p.frs.length){
+    const TN={friend:'friend',comrade:'comrade in arms',cred:'creditor',debt:'debtor',rival:'rival'};
+    const rows=[];
+    for(const e of p.frs){
+      if(typeof e==='number')continue;
+      const q=sim.people.get(e.id);
+      if(!q||q.dead)continue;
+      rows.push('<div style="font-size:12px">'+L('person',e.id,fullName(q))+' <span class="sub">'+(TN[e.t]||e.t)+' · '+(e.s>=2?'unbreakable':e.s>=1.2?'strong':'loose')+'</span></div>');
+    }
+    if(rows.length)h+='<h3>Bonds</h3>'+rows.join('');
+  }
   // family
   const fam=[];
   const fa=p.fa&&getP(p.fa),mo=p.mo&&getP(p.mo),sp=p.spouse&&getP(p.spouse);
@@ -7085,6 +7114,7 @@ $('#cbRoads').addEventListener('change',e=>toggleRoads(e.target.checked));
 function hwMaxSpeedIx(){
   // ladder adapts to the processor; pro worlds trade top speed for depth
   const c=navigator.hardwareConcurrency||4;
+  if(world&&world.best)return c>=12?5:4;         // 25x / 10x: the deepest world takes its time
   if(world&&world.pro)return c>=12?6:c>=8?5:4;   // 100x / 25x / 10x
   return c>=6?6:c>=4?5:4;
 }
@@ -7207,23 +7237,27 @@ $('#btnNew').addEventListener('click',()=>{
    '<label>Pre-written history</label><select id="nwHist"><option value="0">None — begin at the founding</option><option value="15">15 years</option><option value="40" selected>40 years</option><option value="80">80 years</option></select>'+
    '<label>Simulation</label><select id="nwPro">'+
    '<option value="0" selected title="The classic engine. Some history (wars, prophets, the great beast) is paced by tuned probabilities. Fastest, full speed ladder.">Normal — classic Chronica</option>'+
-   '<option value="1" title="Zero scheduled drama. Rebellions are recruited person by person through real friendships and grievances. Wars need a real casus belli. Legends are man-eaters with real body counts. Prophets are born of grief. Minds break under real loss.">Pro — full emergence, zero scheduled drama</option></select>'+
+   '<option value="1" title="Zero scheduled drama. Rebellions are recruited person by person through real friendships and grievances. Wars need a real casus belli. Legends are man-eaters with real body counts. Prophets are born of grief. Minds break under real loss.">Pro — full emergence, zero scheduled drama</option>'+
+   '<option value="2" title="Everything Pro has, and the ledgers never thin: every soul walks the map at any population, memories run deeper, bonds run wider, the chronicle keeps four times the record, every remembered life is saved forever. The speed ladder is the price.">Best: the full Dwarf Fortress, everyone tracked, everything kept</option></select>'+
    '<div class="note" id="nwProNote">Normal: the classic engine. Some history is paced by tuned probabilities so every world stays lively. Full speed ladder.</div>'+
    '<label>Creature minds</label><select id="nwBrains"><option value="0" selected>Classic instincts</option><option value="1">Worm brains — every animal runs the real C. elegans connectome</option></select>'+
    '<div class="note">Worm brains give every beast a live 300-neuron nervous system (Cook et al. 2019, via OpenWorm) driving its fear, hunger and movement. The choice is woven into the world and cannot be changed later.</div>'+
    '<div class="btnrow" style="margin-top:14px"><button id="nwGo" class="on">Create world</button></div>');
   $('#nwRand').addEventListener('click',()=>{$('#nwSeed').value=Math.floor(Math.random()*1e9)});
   $('#nwPro').addEventListener('change',e=>{
-    $('#nwProNote').textContent=e.target.value==='1'
+    $('#nwProNote').textContent=e.target.value==='2'
+      ?'Best: everything Pro has, with nothing thinned for speed. Every villager physically walks at any population. Memories run to sixteen, bonds to sixteen, the chronicle holds twenty thousand events, and every remembered soul is kept in the save forever. Top speed 25x on strong machines, 10x otherwise. The deepest world Chronica can weave.'
+      :e.target.value==='1'
       ?'Pro: no dice decide whether history happens. Rebellions are plotted and recruited through real friendships and grievances. Wars are declared for real shortages ("coveting its ore-rich hills"). Man-eating beasts earn their names from real body counts. Prophets are born of grief; relics need a patron and a treasury; minds break under real loss. The speed ladder adapts to your processor — quality first.'
       :'Normal: the classic engine. Some history is paced by tuned probabilities so every world stays lively. Full speed ladder.';
   });
   $('#nwGo').addEventListener('click',()=>{
     const seed=$('#nwSeed').value||String(Math.random());
-    const size=$('#nwSize').value,hist=+$('#nwHist').value,brains=$('#nwBrains').value==='1',pro=$('#nwPro').value==='1';
+    const mode=$('#nwPro').value;
+    const size=$('#nwSize').value,hist=+$('#nwHist').value,brains=$('#nwBrains').value==='1',pro=mode!=='0',best=mode==='2';
     $('#modal').classList.add('hidden');
     const dims=size==='s'?[180,120]:size==='l'?[300,190]:[240,150];
-    bootWorld(seed,dims[0],dims[1],hist,brains,pro);
+    bootWorld(seed,dims[0],dims[1],hist,brains,pro,best);
   });
 });
 
@@ -7234,7 +7268,7 @@ function saveString(){
   const arr=[...sim.souls.values()];
   for(let i=arr.length-1;i>=0;i--){
     const s=arr[i];
-    if(s.notable||kept<4000){soulsArr.push(s);kept++}
+    if(s.notable||kept<(world.best?1e9:4000)){soulsArr.push(s);kept++}
   }
   const data={v:2,seedStr:world.seedStr,W:world.W,H:world.H,name:world.name,
     biome:b64FromBuf(world.biome.buffer),river:b64FromBuf(world.river.buffer),road:b64FromBuf(world.road.buffer),
@@ -7242,7 +7276,7 @@ function saveString(){
     cut:b64FromBuf(world.cut.buffer),
     settleId:b64FromBuf(world.settleId.buffer),
     elevQ:b64FromBuf(new Uint8Array([...world.elev].map(v=>clamp(Math.round((v+1)*127),0,255))).buffer),
-    brains:world.brains?1:0,pro:world.pro?1:0,
+    brains:world.brains?1:0,pro:world.pro?1:0,best:world.best?1:0,
     cultures:CULTURES,
     vege:vegSer(),
     sim:{day:sim.day,nextId:sim.nextId,people:[...sim.people.values()],souls:soulsArr,
@@ -7267,7 +7301,7 @@ function saveString(){
         return r;
       }),
       religions:sim.religions,
-      relations:sim.relations,events:sim.events.slice(-3000),weather:sim.weather,drought:sim.drought,stats:sim.stats,fires:sim.fires},
+      relations:sim.relations,events:sim.events.slice(-(world.best?12000:3000)),weather:sim.weather,drought:sim.drought,stats:sim.stats,fires:sim.fires},
     cam:{x:cam.x,y:cam.y,cell:cam.cell}};
   return JSON.stringify(data);
 }
@@ -7299,7 +7333,8 @@ function loadString(str){
   sim.snaps=(s.snaps||[]).map(o=>({y:o.y,d:new Uint8Array(bufFromB64(o.d))}));
   tlBg=null;
   world.brains=!!d.brains;
-  world.pro=!!d.pro;
+  world.pro=!!d.pro||!!d.best;
+  world.best=!!d.best;
   vegDeser(d.vege||null);
   if(world.brains)wormInit();
   for(const f of sim.factions)if(!f.wars)f.wars={};
@@ -7311,7 +7346,7 @@ function loadString(str){
   sel=null;avatar=null;avatarMode=false;
   recomputeTerritory();
   terrainDirty=true;minimapDirty=true;
-  $('#worldname').textContent='· '+world.name+(world.brains?' · worm minds':'')+(world.pro?' · pro':'');
+  $('#worldname').textContent='· '+world.name+(world.brains?' · worm minds':'')+(world.best?' · best':world.pro?' · pro':'');
   buildSpeedButtons();
 }
 $('#btnSave').addEventListener('click',()=>{
@@ -7341,7 +7376,7 @@ $('#btnLoad').addEventListener('click',()=>{
 function alertBox(msg){showModal('<h2>Hm.</h2><div class="note">'+esc(msg)+'</div><div class="btnrow" style="margin-top:10px"><button onclick="document.querySelector(\'#modal\').classList.add(\'hidden\')">Close</button></div>')}
 
 /* ---------- boot ---------- */
-function bootWorld(seedStr,W,H,histYears,brains,pro){
+function bootWorld(seedStr,W,H,histYears,brains,pro,best){
   booting=true;
   $('#genoverlay').style.display='flex';
   $('#ticker').innerHTML='';$('#toasts').innerHTML='';
@@ -7353,7 +7388,8 @@ function bootWorld(seedStr,W,H,histYears,brains,pro){
     generateWorld(seedStr,W,H,(t)=>setP(0.15,t));
     vegInit();
     world.brains=!!brains;
-    world.pro=!!pro;
+    world.pro=!!pro||!!best;
+    world.best=!!best; // best is pro with nothing thinned: everyone tracked, everything kept
     if(world.brains)wormInit();
     setP(0.35,'the first peoples arrive…');
     setTimeout(()=>{
@@ -7376,7 +7412,7 @@ function bootWorld(seedStr,W,H,histYears,brains,pro){
         // aim camera at the mightiest settlement
         let best=null;for(const st of sim.settlements)if(!st.razed&&(!best||st.popC>best.popC))best=st;
         if(best){cam.x=best.x;cam.y=best.y;cam.cell=16}
-        $('#worldname').textContent='· '+world.name+(world.brains?' · worm minds':'')+(world.pro?' · pro':'');
+        $('#worldname').textContent='· '+world.name+(world.brains?' · worm minds':'')+(world.best?' · best':world.pro?' · pro':'');
         buildSpeedButtons();
         booting=false;
         terrainDirty=true;minimapDirty=true;
