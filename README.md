@@ -205,6 +205,8 @@ The right sidebar is not a dashboard, it is an observatory into the world. Chron
 - **Minimap.** The whole continent with faction territories tinted, settlements marked, armies as red dots, and a click-to-jump viewport
 - **Save and load.** Snapshot the entire world to browser storage or export it as a portable string
 - **New worlds.** Choose a seed, a world size, and how many years of history to simulate before you arrive. The world can open with 80 years of chronicle already written
+- **Three simulations.** Normal is the classic engine with a full speed ladder. Pro adds plot-recruited rebellions, minds that break under loss, and prophets born of grief, with zero scheduled drama. Best is Pro with nothing thinned for speed, in the spirit of Dwarf Fortress: every villager physically walks at any population, memories run to sixteen per soul, bonds to sixteen, the chronicle holds twenty thousand events, and every remembered life stays in the save forever
+- **Souls carry their past.** A person's panel shows their memory (famines lived through, homes conquered, friends cut down, and the distorted family tales inherited from their parents, each with the realm it blames) and their bonds (friends, comrades in arms, creditors, rivals, graded loose to unbreakable)
 
 ![Yearly statistics with population and realm curves](screenshots/07-stats.jpg)
 
