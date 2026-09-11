@@ -3682,6 +3682,29 @@ function updateAnimals(){
     a.age++;
     const sp=SPECIES[a.sp];
     if(!(sp.beast||a.legend)&&a.age>ri(3000,4600)*(sp.amph?3:1)){dead.push(a);continue}
+    // deep water is deep water, legend or no: a stranded land animal swims for shore or goes under
+    if(!sp.water&&!sp.amph&&isWater(world.biome[idx(a.x,a.y)])){
+      let ashore=false;
+      for(let r2=1;r2<=2&&!ashore;r2++)for(let k=0;k<8;k++){
+        const nx=a.x+DX8[k]*r2,ny=a.y+DY8[k]*r2;
+        if(inb(nx,ny)&&passable(idx(nx,ny))){a.x=nx;a.y=ny;a.act='swimming ashore, soaked and spent';a.fat=1;ashore=true;break}
+      }
+      if(!ashore){
+        a._drown=(a._drown||0)+1;
+        a.act='struggling in open water';
+        if(a._drown>4){
+          a._cause='drowned when the waters closed over it';
+          if(a.legend&&sim.beast&&sim.beast.id===a.id){
+            logEvent('calamity',sim.beast.nm+' has drowned; the waters took what no hunter could.',a.x,a.y,undefined,
+              {cause:getEv(sim.beast.evId)||'the rising water'});
+            sim.beast.slain=sim.day;
+          }
+          dead.push(a);
+        }
+        continue;
+      }
+      a._drown=0;
+    }
     if(sp.river){salmonUpdate(a,sp,dead);continue}
     if(sp.water){
       // ocean shoals: drift, school, and scatter when the nets come near
