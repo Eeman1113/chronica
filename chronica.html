@@ -86,7 +86,20 @@ canvas.chart{width:100%;border:1px solid var(--line);border-radius:2px;backgroun
 table.t{width:100%;border-collapse:collapse;font-size:12px}
 table.t td,table.t th{padding:2px 6px 2px 0;text-align:left;border-bottom:1px solid #241e18}
 table.t th{color:var(--faint);font-weight:400;font-size:10px;text-transform:uppercase;letter-spacing:.08em}
-table.t td{font-variant-numeric:tabular-nums}
+table.t td{font-variant-numeric:tabular-nums;color:var(--par)}
+/* the panel's ink is always explicit: no browser default or injected sheet may black it out */
+#panelbody,#panelbody div,#panelbody span,#panelbody td,#panelbody th,#panelbody b,#panelbody i,#panelbody label{color:var(--par)}
+#panelbody .sub,#panelbody .sub span{color:var(--dim)}
+#panelbody .kv .k{color:var(--faint)}
+#panelbody .bc,#panelbody .bc .lnk{color:var(--faint)}
+#panelbody .lnk{color:#d8c88f}
+#panelbody .onum{color:#d8c88f}
+#panelbody h3{color:var(--dim)}
+#panelbody .obsK{color:var(--faint)}
+#panelbody .chip{color:var(--dim)}
+#modalbox,#modalbox div,#modalbox span,#modalbox td{color:var(--par)}
+#modalbox .sub{color:var(--dim)}
+#modalbox .lnk{color:#d8c88f}
 
 #ticker{position:fixed;left:12px;bottom:12px;width:430px;max-width:44vw;z-index:12;pointer-events:none;
   display:flex;flex-direction:column;gap:2px;font-size:12px}
