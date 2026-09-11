@@ -141,6 +141,24 @@ The long-run payoff is real evolution you can read: after 48 generations beside 
 
 ![A mounted town with sixty cattle, and the reason it was founded stated in its panel](screenshots/16-livestock-town.jpg)
 
+### The food web, tooth and claw
+Predators do not roll dice against a spawn table; they hunt. A hungry bear picks up a real scent, and its inspector shows the whole decision: what it senses, what it weighs, and why hunting won. The bear below is generation 83 of an unbroken lineage, its gluttonous appetite (+45 percent) and solitary habit (-43 percent) the product of eighty three rounds of birth, mutation, and death.
+
+![A generation-83 bear stalking a deer it can smell six tiles away, its utility weighing shown live](screenshots/17-hunt.jpg)
+
+Death is not deletion. A kill or a starvation leaves a carcass on the map, drawn as a struck-through letter, that rots at the pace of the season: summer ripens it, winter preserves it. Click one and the inspector reads its state like a field necropsy: cause and date of death, decay stage in warm-days, meat remaining, and who could still safely eat it. Scavengers strip carcasses in the order of their stomachs, foxes and pigs first, proud cats last and only when starving, and what rots in place feeds the soil beneath it. Below, a boar has already eaten six of the ten meat off a deer that starved three days earlier.
+
+![A dead deer half-eaten by a boar, its decay, remaining meat, and edibility inspected](screenshots/18-carrion.jpg)
+
+### The river and the water's edge
+Salmon live whole emergent lives. A heritable urge builds in each mature fish as the water cools, and when it wins the weighing they run upstream, dodging bears in the shallows, to spawn in the gravel of whichever headwater their own river offers. The run costs everything: the spent fish drift, die, and feed the banks. Selection is visible in the panel, because only fish that reach the gravel leave descendants: the runner below is generation 33 and carries an upstream drive 94 percent above its founder stock.
+
+![The autumn salmon run: a generation-33 fish with +94 percent evolved upstream drive, spawning urge full](screenshots/19-salmon.jpg)
+
+Crocodiles are patience made flesh. Their hunger builds over weeks, not days, and their whole strategy is the water's edge, where everything must eventually come to drink. They bask when cold, go torpid through hard winters, yield territory to bigger elders, steal carrion off the shore, snap salmon from the current, and take drinkers at the bank, sometimes people. A crocodile that builds a body count earns a name and becomes a legend the same way a man-eating bear does. The one below has waited so long its ambush weighing reads 1.44 and its hunger bar is full.
+
+![A crocodile lying in the shallows beside a town, only eyes above the water, its ambush urge at maximum](screenshots/20-crocodile.jpg)
+
 ### A language for every world
 No name in Chronica comes from a fixed list. Each world seed grows its own phonologies, sound inventories and syllable habits, for its five cultures, its geography, and its monsters. People, surnames, towns, realms, deities, relics, and named beasts are all words in languages that exist only in that one world, so no two runs ever share a name. Surnames still inherit through families, settlement names still take culture-specific suffixes, and religions are named for generated deities in their founder's tongue.
 
@@ -192,8 +210,12 @@ Every event above is recorded with its year and location: foundings, wars, battl
 ### A living vegetation ecology
 The map is not painted scenery. Every land tile is an ecological cell holding a real plant community: one of nine species (meadow and steppe grasses, bramble, oak, pine, swamp reed, desert scrub, river willow, and cultivated grain), its standing biomass, the litter of its dead, the water and nutrients of its soil, a seed bank that remembers what once grew there, and a locally selected drought tolerance. Growth is biology times environment: temperature by latitude, season, and altitude, soil moisture recharged by real rain and drawn down by sun and roots, nutrients returned by decomposition. Cold is dormancy, drought is stress, saturation drowns the wrong roots. Grazers eat actual biomass and dung the soil back; thin pasture means hungry herds and fewer calves. Fields are crop patches on the same engine, so harvests genuinely differ town by town with soil, weather, and blight, which spreads root to root through dense wet plantings. Fire burns actual fuel and its ash feeds the ground. Forests return only where seeds, soil, and rain agree, so an abandoned town is reclaimed by whatever its seed banks held, not by a script. Press V to see the world through ecological lenses: biomass, soil nutrients, soil moisture.
 
+![The biomass lens: living vegetation in green, with a dark scar where fire and drought stripped a valley](screenshots/23-lens.jpg)
+
 ### The World Observatory
 The right sidebar is not a dashboard, it is an observatory into the world. Chronica has no player, only an observer, and the observer can descend from the whole world to a single fish. Six views: Inspect, World, Life, Society, Nature, History. The World overview answers "what is this world right now" with population, realms, money systems, forest cover, active fires, births and deaths this year, and every number is clickable and drills down into its own section: sortable people and settlement indexes, family registers, per species animal pages with gene drift, a carrion ledger, the economy observatory with per realm money stages and the full currency ledger, a technology observatory that lists the living masters of every craft, food webs computed from the live ecology, and a causality browser over every event that carries decision weights. A global search spans people, the dead, settlements, realms, faiths, species, and the chronicle, and a breadcrumb trail records the observer's descent. Nothing shown is invented: every number is computed from simulation state at the moment you look, and what is not simulated is simply not displayed.
+
+![The World overview: nine realms, four wars, six barter and three commodity money systems, a drought in progress](screenshots/21-observatory.jpg)
 
 ![The realms panel: living empires, fallen realms, and faiths](screenshots/05-realms.jpg)
 
@@ -207,6 +229,8 @@ The right sidebar is not a dashboard, it is an observatory into the world. Chron
 - **New worlds.** Choose a seed, a world size, and how many years of history to simulate before you arrive. The world can open with 80 years of chronicle already written
 - **Three simulations.** Normal is the classic engine with a full speed ladder. Pro adds plot-recruited rebellions, minds that break under loss, and prophets born of grief, with zero scheduled drama. Best is Pro with nothing thinned for speed, in the spirit of Dwarf Fortress: every villager physically walks at any population, memories run to sixteen per soul, bonds to sixteen, the chronicle holds twenty thousand events, and every remembered life stays in the save forever
 - **Souls carry their past.** A person's panel shows their memory (famines lived through, homes conquered, friends cut down, and the distorted family tales inherited from their parents, each with the realm it blames) and their bonds (friends, comrades in arms, creditors, rivals, graded loose to unbreakable)
+
+![A forty-year-old laborer carrying fourteen memories of hunger, two of them family tales, and five friendships](screenshots/22-memory.jpg)
 
 ![Yearly statistics with population and realm curves](screenshots/07-stats.jpg)
 
@@ -247,6 +271,8 @@ Diplomacy is a symmetric relations score per faction pair, drifted yearly by bor
 
 ### 5. The economy earns its money
 There is no technology called currency. Every settlement keeps a physical inventory of nine goods (grain, meat, fish, wood, stone, ore, metal, tools, salt) produced by its actual residents, eaten, worn out, and spoiled daily, with local prices set by supply against demand. Caravans and trade ships launch only when a trader sees a real arbitrage profit between two towns they actually know about. Every barter exchange that fails for want of matching goods is counted, and when that measured friction grows heavy enough, the realm's markets converge on whichever good their own ledgers say is most traded, most durable, and most divisible: salt in one world, grain or fish or cattle in another. Coinage needs more: a living master of minting (itself discoverable only downstream of smelting, which needs ore in the ground and miners at work), a full treasury, and trade too heavy for sacks of the commodity. A king at war with an empty treasury may debase his coin; prices inflate, traders start refusing it, and the currency can collapse back to salt and barter. Every one of these stages is reversible and none of them is guaranteed. In test worlds one realm struck two named currencies and debased both to ruin, while its island neighbor never monetized at all in four centuries.
+
+![The economy observatory: three realms on commodity money (fish and grain), six still bartering, world goods and prices](screenshots/24-economy.jpg)
 
 ### 6. Knowledge lives in skulls
 The tech tree is gone. Techniques (smelting, ironwork, irrigation, writing, minting, masonry, the wheel and the waterwheel, shipwrighting) exist only in the heads of named individuals. They are discovered by a specialist facing a real local problem in the right geography, passed master to apprentice over years, carried by migrants and captives, and lost when the last knower dies. Realms diverge because their mountains, rivers, and coasts differ, and the chronicle regularly records a craft dying with its last master and being rediscovered generations later.
