@@ -4391,7 +4391,15 @@ function stepAnimal(a,dx,dy,fleeing){
   const i=idx(nx,ny);
   if(!passable(i))return false;
   if(world.building[i]===BUILD.FENCE||world.building[i]===BUILD.WALL)return false; // fence and rampart alike are walls to every beast
-  if(world.building[i]===BUILD.GATE&&a.dom!==world.settleId[i])return false; // the gate opens only for the town's own herd
+  if(world.building[i]===BUILD.GATE){
+    const gst=world.settleId[i]>=0?sim.settlements[world.settleId[i]]:null;
+    const open=!!(gst&&gst.gates&&gst.gates[i]&&gst.gates[i].o);
+    if(!open&&a.dom!==world.settleId[i])return false; // barred to everything wild
+    if(!open&&gst){ // the herd noses the gate open, and it stays open until someone bars it
+      gst.gates=gst.gates||{};gst.gates[i]={o:1,since:sim.day};terrainDirty=true;
+    }
+    if(open&&a.dom!==world.settleId[i])a._viaGate=sim.day; // it walked in through a gate somebody left open
+  }
   if(world.settleId[i]>=0&&!fleeing&&world.settleId[i]!==a.dom)return false; // livestock may walk its own town
   a.x=nx;a.y=ny;
   a.fat=Math.min(1,(a.fat||0)+0.01);
@@ -4712,7 +4720,12 @@ function instinctAnimalUpdate(a,sp,dead){
                   defended=true;
                 }
                 if(!defended){stt.lvLost=(stt.lvLost||0)+1; // another head gone: the ledger that buys a fence
-                  stt.threat=stt.threat||{};stt.threat[sp.name]=(stt.threat[sp.name]||0)+1}
+                  stt.threat=stt.threat||{};stt.threat[sp.name]=(stt.threat[sp.name]||0)+1;
+                  if(a._viaGate&&sim.day-a._viaGate<6&&(!stt._gateShame||curYear()-stt._gateShame>1)){
+                    stt._gateShame=curYear();
+                    logEvent('misc','The gate of '+stt.nm+' stood open in the night, and the '+sp.name.toLowerCase()+' knew it.',a.x,a.y,{sett:stt.id},
+                      {why:{gateLeftOpen:1,famine:Math.round(stt.famine||0)},cause:'no free hands had barred it'});
+                  }}
               }
               if(!defended){
                 prey._cause='brought down by a '+sp.name.toLowerCase();prey._bite=3;
@@ -5300,6 +5313,15 @@ function monthly(){
     maybeBuildPen(st);
     wallsMonthly(st,f);
     leadsMonthly(st);
+    // gates: free hands bar them by dusk; famine, war, and empty houses leave them swinging
+    if(st.gates){
+      const busy=(st.famine>20?0.4:1)*(Object.keys(sim.factions[st.fac]&&sim.factions[st.fac].wars||{}).length?0.6:1);
+      for(const gi in st.gates){
+        if(!st.gates[gi].o)continue;
+        if(world.building[+gi]!==BUILD.GATE){delete st.gates[gi];continue}
+        if(chance(clamp(st.popC*0.03,0.08,0.7)*busy)){st.gates[gi].o=0;terrainDirty=true}
+      }
+    }
     // sanitation: dense towns breed sickness in proportion to their size and crowding — cities are sinks, not fountains
     if(st.popC>120){
       const crowd2=st.popC/(st.houses*6+6);
@@ -5864,7 +5886,11 @@ function renderTerrain(vr,season,phase){
       const v=world.variant[i];
       if(bld){
         const bdf=BUILD_DEF[bld];
-        if(bld===BUILD.FARM){
+        if(bld===BUILD.GATE){
+          const gst=world.settleId[i]>=0?sim.settlements[world.settleId[i]]:null;
+          const open=!!(gst&&gst.gates&&gst.gates[i]&&gst.gates[i].o);
+          ch=bdf.g;fg=open?'#d9a05a':bdf.fg; // amber when it stands open, unbarred
+        }else if(bld===BUILD.FARM){
           // fields follow the farming year, and sway a little in the growing season
           ch=((season===0||season===1)&&(v+phase)%2===0)?'=':FARM_G[season];
           fg=FARM_FG[season];
@@ -7146,7 +7172,12 @@ function renderTile(x,y){
       h+='<h3>The pen of '+esc(fst.nm)+'</h3><div class="kv">';
       h+='<div class="k">Timbers</div><div class="v">'+(fst.pen.cond>0.66?'sound':fst.pen.cond>0.33?'weathering':'rotting, a bold beast could clear them')+'</div>';
       h+='<div class="k">Herd</div><div class="v">'+herd2+' head kept</div>';
-      if(world.building[i]===BUILD.GATE)h+='<div class="k">Gate</div><div class="v">opened for the town\'s own beasts, barred to everything wild</div>';
+      if(world.building[i]===BUILD.GATE){
+        const gOpen=fst.gates&&fst.gates[i]&&fst.gates[i].o;
+        h+='<div class="k">Gate</div><div class="v">'+(gOpen
+          ?'<span style="color:#d9a05a">standing open, unbarred these '+Math.max(1,sim.day-fst.gates[i].since)+' days; anything may walk through</span>'
+          :'barred; it opens for the town\'s own beasts and no others')+'</div>';
+      }
       h+='</div>';
     }
   }
