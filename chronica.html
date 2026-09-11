@@ -3492,7 +3492,8 @@ function maybeStartTrip(p){
   const st=sim.settlements[p.home];
   if(!st||st.razed)return;
   const hm=homeTile(p)||{x:st.x,y:st.y};
-  const atHome=Math.abs(p.x-hm.x)<=4&&Math.abs(p.y-hm.y)<=4;
+  // home is the doorstep, not the neighborhood: one tile of the family's own door
+  const atHome=Math.abs(p.x-hm.x)<=1&&Math.abs(p.y-hm.y)<=1;
   if(!atHome){ // walk home, to the family's own house
     const far=Math.max(Math.abs(p.x-hm.x),Math.abs(p.y-hm.y))>25;
     if(far&&pathBudget>0){pathBudget--;p.path=findPath(p.x,p.y,hm.x,hm.y,1500)}
