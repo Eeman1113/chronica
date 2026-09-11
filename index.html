@@ -284,14 +284,17 @@ bd(B.SWAMP,'Marsh',     ['"','~','τ'],['#5f7a5e','#657f5e','#6d7a52','#647079']
 bd(B.LAKE ,'Lake',      ['~','≈','~'],['#7fa3bd','#7fa3bd','#7aa0ba','#a9c4d4'],'#16222b',-1,'#2a4356');
 const RIVER_FG=['#7fa3bd','#7fa3bd','#7aa0ba','#9fc0d4'], RIVER_BG='#16222b';
 
-const BUILD={NONE:0,HOUSE:1,FARM:2,MARKET:3,TEMPLE:4,KEEP:5,WALL:6};
+const BUILD={NONE:0,HOUSE:1,FARM:2,MARKET:3,TEMPLE:4,KEEP:5,WALL:6,STORE:7,FENCE:8,GRAVE:9};
 const BUILD_DEF=[null,
  {g:'⌂',fg:'#c2b6a3',name:'House'},
  {g:'≡',fg:null,name:'Field'},          // fg seasonal
  {g:'¤',fg:'#c2a05a',name:'Market'},
  {g:'†',fg:'#cfc0e0',name:'Temple'},
  {g:'▣',fg:'#d8cdb8',name:'Keep'},
- {g:'#',fg:'#a49a89',name:'Wall'}];
+ {g:'#',fg:'#a49a89',name:'Wall'},
+ {g:'⊟',fg:'#b59a6a',name:'Storehouse'},
+ {g:'π',fg:'#a08d5f',name:'Fence'},
+ {g:'+',fg:'#9b948a',name:'Grave'}];
 const FARM_FG=['#87a04b','#b5a94f','#c29a45','#6b6f75'];
 const FARM_G=['=','≡','≡','∙'];               // plowed, growing, harvest, stubble
 const CANAL_FG='#79a89b';
@@ -798,7 +801,7 @@ function buildStruct(st,type){
   const bb=world.biome[i]; // raising a structure clears the trees on its tile
   if(bb===B.FOREST){world.biome[i]=B.GRASS;world.cut[i]=1}
   else if(bb===B.TAIGA){world.biome[i]=B.TUNDRA;world.cut[i]=1}
-  if(type===BUILD.HOUSE)st.houses++;else if(type===BUILD.FARM)st.farms++;
+  if(type===BUILD.HOUSE)st.houses++;else if(type===BUILD.FARM)st.farms++;else if(type===BUILD.STORE)st.stores=(st.stores||0)+1;
   else if(type===BUILD.MARKET)st.market++;else if(type===BUILD.TEMPLE)st.temple++;
   else if(type===BUILD.KEEP)st.keep++;else if(type===BUILD.WALL)st.walls++;
   terrainDirty=true;
@@ -3453,9 +3456,22 @@ function updateSettlements(){
     const farmers=c.farmer||0;
     const farmEff=Math.min(st.farms,farmers/1.2)*7.4*SEASON_FARM[s]*irrig*wxMul*(st._cropH||1)
       +(c.laborer||0)*0.9+st.popC*0.12; // gleaning and gardens fold into grain
-    st.stock.wood+=(c.woodcutter||0)*1.1*(st._forestMod??1);
+    // timber comes home on real backs now (the trips and their felled trees); nothing appears in the stacks unearned
     st.stock.stone+=(c.miner||0)*0.75;
-    st.stock.wood=Math.min(st.stock.wood,400);st.stock.stone=Math.min(st.stock.stone,400);
+    st.stock.wood=Math.min(st.stock.wood,woodCap(st));st.stock.stone=Math.min(st.stock.stone,400);
+    if(sim.people.size>1800&&!world.best&&(c.woodcutter||0)&&st.stock.wood<woodCap(st)){
+      st.stock.wood=Math.min(woodCap(st),st.stock.wood+(c.woodcutter||0)*0.5);
+      if(chance((c.woodcutter||0)*0.08)){
+        for(const i of st.tiles){
+          const b2=world.biome[i];
+          if((b2===B.FOREST||b2===B.TAIGA)&&!world.building[i]){
+            world.biome[i]=b2===B.TAIGA?B.TUNDRA:B.GRASS;world.cut[i]=1;
+            if(world.veg){world.litter[i]+=world.veg[i]*0.4;world.veg[i]*=0.15}
+            terrainDirty=true;break;
+          }
+        }
+      }
+    }
     const day=econDaily(st,c,farmEff,wxMul);
     if(day.short){
       st.famine++;
@@ -3522,6 +3538,7 @@ function stepAlong(e){
   e.x=i%world.W;e.y=(i/world.W)|0;
   if(e.pi>=e.path.length){e.path=null;e.pi=0}
 }
+function woodCap(st){return 100+(st.stores||0)*150}
 function homeTile(p){
   // a family keeps one house: everyone of a surname walks back to the same door, not the town square.
   // there is no silent reassignment: a burned or lost house means the family waits for the next
@@ -3534,6 +3551,97 @@ function homeTile(p){
     p.hx=undefined; // the roof is gone; homelessness is decided at the monthly allotment, not papered over here
   }
   return null;
+}
+function maybeBuildPen(st){
+  // a fence is bought with losses and logs, never with a die
+  if(st.pen||st.razed)return;
+  if((st.lvLost||0)<3||st.popC<15||st.stock.wood<18)return;
+  let herd=0;for(const a of sim.animals)if(a.dom===st.id)herd++;
+  if(herd<3)return;
+  const W=world.W;
+  for(const i of st.tiles){
+    const x0=i%W,y0=(i/W)|0;
+    if(Math.max(Math.abs(x0-st.x),Math.abs(y0-st.y))<3)continue;
+    let ok=true;
+    for(let dy=0;dy<4&&ok;dy++)for(let dx=0;dx<5;dx++){
+      const x=x0+dx,y=y0+dy;
+      if(!inb(x,y)){ok=false;break}
+      const j=idx(x,y);
+      const b2=world.biome[j];
+      if(world.building[j]||world.river[j]||(b2!==B.GRASS&&b2!==B.SHRUB)){ok=false;break}
+    }
+    if(!ok)continue;
+    const gxx=x0+2,gyy=(st.y<y0)?y0:y0+3; // the gate faces the town
+    for(let dy=0;dy<4;dy++)for(let dx=0;dx<5;dx++){
+      const x=x0+dx,y=y0+dy;
+      if(dx>0&&dx<4&&dy>0&&dy<3)continue;
+      if(x===gxx&&y===gyy)continue;
+      world.building[idx(x,y)]=BUILD.FENCE;
+    }
+    st.stock.wood-=18;
+    st.pen={x0,y0,x1:x0+4,y1:y0+3,gx:gxx,gy:gyy,cond:1};
+    terrainDirty=true;
+    logEvent('misc',st.nm+' rings its pasture with a timber fence; the beasts have taken too many head.',x0,y0,{sett:st.id},
+      {why:{headLost:st.lvLost,herd,logsSpent:18}});
+    return;
+  }
+}
+function buryPerson(st,p){
+  st.gy=st.gy||{tiles:[],graves:[],old:0};
+  const gy=st.gy;
+  if(gy.graves.length>=gy.tiles.length*12){
+    // consecrate new ground at the town's edge, beside the stones already standing
+    const W=world.W;let best=-1,bs=-1;
+    for(const i of st.tiles){
+      if(world.building[i]||world.river[i])continue;
+      const b2=world.biome[i];
+      if(b2!==B.GRASS&&b2!==B.SHRUB)continue;
+      const x=i%W,y=(i/W)|0;
+      let adj=0;
+      for(let k=0;k<8;k++){const qx=x+DX8[k],qy=y+DY8[k];if(inb(qx,qy)&&world.building[idx(qx,qy)]===BUILD.GRAVE)adj++}
+      const sc=Math.max(Math.abs(x-st.x),Math.abs(y-st.y))+adj*5;
+      if(sc>bs){bs=sc;best=i}
+    }
+    if(best<0)return; // no ground to spare: this soul lives only in memory
+    world.building[best]=BUILD.GRAVE;
+    gy.tiles.push(best);
+    terrainDirty=true;
+  }
+  gy.graves.push({p:p.id,d:sim.day,w:0});
+  if(gy.graves.length>240){gy.graves.shift();gy.old++}
+}
+function graveyardYearly(){
+  let any=false;
+  for(const st of sim.settlements)if(st.gy&&st.gy.graves.length){any=true;break}
+  if(!any)return;
+  // who among the living still holds a name? kin, bonds, and carried memories
+  const rem=new Set();
+  for(const p of sim.people.values()){
+    if(p.dead)continue;
+    if(p.fa)rem.add(p.fa);if(p.mo)rem.add(p.mo);if(p.spouse)rem.add(p.spouse);
+    if(p.kids)for(const k of p.kids)rem.add(k);
+    if(p.frs)for(const e of p.frs)if(e&&e.id!==undefined)rem.add(e.id);
+    if(p.mem)for(const m of p.mem)if(m.p!==undefined)rem.add(m.p);
+  }
+  for(const st of sim.settlements){
+    const gy=st.gy;
+    if(!gy||!gy.graves.length)continue;
+    const keep=[];
+    for(const g2 of gy.graves){
+      const soul=getP(g2.p);
+      if(soul&&soul.notable){g2.w=-1;keep.push(g2);continue} // a monument outlasts memory
+      if(rem.has(g2.p))g2.w=0;
+      else g2.w=(g2.w<0?0:g2.w)+1;
+      if(g2.w>60){gy.old++;continue} // the grass takes the nameless stone at last
+      keep.push(g2);
+    }
+    gy.graves=keep;
+    // ground emptied of its graves returns to the living world, oldest plot last
+    while(gy.tiles.length>1&&gy.graves.length<=(gy.tiles.length-1)*12){
+      const ti=gy.tiles.pop();
+      if(world.building[ti]===BUILD.GRAVE){world.building[ti]=BUILD.NONE;terrainDirty=true}
+    }
+  }
 }
 function homesMonthly(){
   // the housing allotment: houses hold six souls; wealthier families keep their roofs,
@@ -3589,6 +3697,14 @@ function maybeStartTrip(p){
   const hm=homeTile(p)||{x:st.x,y:st.y};
   // home is the doorstep, not the neighborhood: one tile of the family's own door
   const atHome=Math.abs(p.x-hm.x)<=1&&Math.abs(p.y-hm.y)<=1;
+  if(atHome&&p.carry){
+    // stack the logs; what the full stacks cannot take is left to rot where it falls
+    const room=Math.max(0,woodCap(st)-st.stock.wood);
+    const put=Math.min(p.carry,room);
+    st.stock.wood+=put;
+    if(p.carry>put&&world.litter)world.litter[idx(p.x,p.y)]+=(p.carry-put)*0.05;
+    p.carry=0;
+  }
   if(!atHome){ // walk home, to the family's own house
     const far=Math.max(Math.abs(p.x-hm.x),Math.abs(p.y-hm.y))>25;
     if(far&&pathBudget>0){pathBudget--;p.path=findPath(p.x,p.y,hm.x,hm.y,1500)}
@@ -3615,7 +3731,7 @@ function maybeStartTrip(p){
       if(prey)target={x:prey.x,y:prey.y};
       else{r=14;target=want((i,b)=>b===B.FOREST||b===B.SHRUB||b===B.TAIGA)}
       break}
-    case 'woodcutter':r=10;target=want((i,b)=>b===B.FOREST||b===B.TAIGA);break;
+    case 'woodcutter':if(st.stock.wood>=woodCap(st))break;r=10;target=want((i,b)=>b===B.FOREST||b===B.TAIGA);break;
     case 'miner':r=12;target=want((i,b)=>b===B.MOUNT);break;
     case 'fisher':r=9;target=want((i,b)=>{if(world.river[i]||b===B.LAKE)return true;
         for(let k=0;k<4;k++){const q=idx(clamp(i%world.W+DX8[k],0,world.W-1),clamp(((i/world.W)|0)+DY8[k],0,world.H-1));if(world.biome[q]===B.OCEAN||world.biome[q]===B.LAKE)return true}return false});break;
@@ -3667,8 +3783,8 @@ function resolveMission(p){
     const st=sim.settlements[p.home];
     if(st&&!st.razed){
       if(p.prof==='woodcutter'){
-        st.stock.wood+=3;
-        // physically fell a tree on or beside the work site
+        // logs ride home on a real back: fell the tree, shoulder the timber
+        p.carry=(p.carry||0)+3;
         for(let k=-1;k<8;k++){
           const qx=p.x+(k<0?0:DX8[k]),qy=p.y+(k<0?0:DY8[k]);
           if(!inb(qx,qy))continue;
@@ -3677,7 +3793,7 @@ function resolveMission(p){
             world.biome[qi]=qb===B.TAIGA?B.TUNDRA:B.GRASS;
             world.cut[qi]=1;world.variant[qi]=Math.floor(rnd()*4);
             if(world.veg){world.litter[qi]+=world.veg[qi]*0.4;world.veg[qi]*=0.15} // the crown becomes slash, the stump holds on
-            st.stock.wood+=4;terrainDirty=true;break;
+            p.carry+=4;terrainDirty=true;break;
           }
         }
       }
@@ -3701,6 +3817,10 @@ function killPerson(p,why){
   p.dead=true;
   sim.yd=(sim.yd||0)+1;
   if(why&&why.includes('fever'))sim.yfever=(sim.yfever||0)+1;
+  if(!(why&&(why.indexOf('lost at sea')>=0||why.indexOf('drown')>=0))){
+    const bst=p.home>=0?sim.settlements[p.home]:null;
+    if(bst&&!bst.razed)buryPerson(bst,p);
+  }
   passRelics(p);
   if(typeof onDeathInherit==='function')onDeathInherit(p);
   { // grief ripples through the family, in every mode
@@ -3962,6 +4082,7 @@ function stepAnimal(a,dx,dy,fleeing){
   if(!inb(nx,ny))return false;
   const i=idx(nx,ny);
   if(!passable(i))return false;
+  if(world.building[i]===BUILD.FENCE)return false; // a fence is a fence, to wolf and cow alike
   if(world.settleId[i]>=0&&!fleeing&&world.settleId[i]!==a.dom)return false; // livestock may walk its own town
   a.x=nx;a.y=ny;
   a.fat=Math.min(1,(a.fat||0)+0.01);
@@ -4140,9 +4261,11 @@ function instinctAnimalUpdate(a,sp,dead){
     const hst=sim.settlements[a.dom];
     if(!hst||hst.razed||!hst.popC){a.dom=undefined}
     else{
-      const dh=Math.max(Math.abs(hst.x-a.x),Math.abs(hst.y-a.y));
-      if(dh>7){a.act='returning to the herd at '+hst.nm;
-        stepAnimal(a,Math.sign(hst.x-a.x),Math.sign(hst.y-a.y),false);return}
+      const tx2=hst.pen?((hst.pen.x0+hst.pen.x1)>>1):hst.x, ty2=hst.pen?((hst.pen.y0+hst.pen.y1)>>1):hst.y;
+      const dh=Math.max(Math.abs(tx2-a.x),Math.abs(ty2-a.y));
+      if(dh>(hst.pen?2:7)){a.act='returning to the '+(hst.pen?'pen':'herd')+' at '+hst.nm;
+        if(!stepAnimal(a,Math.sign(tx2-a.x),Math.sign(ty2-a.y),false)){const k=ri(0,7);stepAnimal(a,DX8[k],DY8[k],false)} // feel along the fence for the gate
+        return}
     }
   }
   // ---- senses ----
@@ -4256,12 +4379,51 @@ function instinctAnimalUpdate(a,sp,dead){
               }
             }
             if(!blocked){
-              prey._cause='brought down by a '+sp.name.toLowerCase();prey._bite=3;
-              dead.push(prey);a.hun=0;noteAnimalKill(a);
-              a.act='devouring a '+SPECIES[prey.sp].name.toLowerCase();
+              // the watch: when the herds of a town are struck, its bravest hunter or soldier answers
+              let defended=false;
+              if(prey.dom!==undefined&&sim.settlements[prey.dom]&&!sim.settlements[prey.dom].razed){
+                const stt=sim.settlements[prey.dom];
+                let guard2=null;
+                for(const q of sim.people.values()){
+                  if(q.dead||q.inArmy||q.sea||q.home!==stt.id)continue;
+                  if(q.prof!=='hunter'&&q.prof!=='soldier')continue;
+                  if(Math.max(Math.abs(q.x-a.x),Math.abs(q.y-a.y))>6)continue;
+                  if(!guard2||q.brav>guard2.brav)guard2=q;
+                }
+                if(guard2&&guard2.brav>0.4&&rnd()<0.3+guard2.brav*0.4){
+                  a._cause='slain by '+fullName(guard2)+' defending the herds of '+stt.nm;a._bite=0;
+                  dead.push(a);
+                  addDist(guard2,2,'Drove a '+sp.name.toLowerCase()+' from the herds of '+stt.nm);
+                  if(chance(0.35))logEvent('life',fullName(guard2)+' slew the '+sp.name.toLowerCase()+' that came for the herds of '+stt.nm+'.',a.x,a.y,{p:guard2.id,sett:stt.id},
+                    {actor:guard2.id,why:{bravery:+guard2.brav.toFixed(2),headLostBefore:stt.lvLost||0,penned:stt.pen?1:0}});
+                  defended=true;
+                }
+                if(!defended)stt.lvLost=(stt.lvLost||0)+1; // another head gone: the ledger that buys a fence
+              }
+              if(!defended){
+                prey._cause='brought down by a '+sp.name.toLowerCase();prey._bite=3;
+                dead.push(prey);a.hun=0;noteAnimalKill(a);
+                a.act='devouring a '+SPECIES[prey.sp].name.toLowerCase();
+              }
             }
           }
-          else{a.act='stalking prey';stepAnimal(a,Math.sign(prey.x-a.x),Math.sign(prey.y-a.y),false)}
+          else{
+            a.act='stalking prey';
+            if(!stepAnimal(a,Math.sign(prey.x-a.x),Math.sign(prey.y-a.y),false)){
+              // a fence in the way: hunger and boldness decide whether it is cleared
+              const bx2=a.x+Math.sign(prey.x-a.x),by2=a.y+Math.sign(prey.y-a.y);
+              if(inb(bx2,by2)&&world.building[idx(bx2,by2)]===BUILD.FENCE&&a.hun>0.7&&g[2]>1.0){
+                const ow=sim.settlements[world.settleId[idx(bx2,by2)]];
+                const cond=ow&&ow.pen?ow.pen.cond:1;
+                if(chance(0.15+(1-cond)*0.35)){
+                  const lx=bx2+Math.sign(prey.x-a.x),ly=by2+Math.sign(prey.y-a.y);
+                  if(inb(lx,ly)&&passable(idx(lx,ly))&&world.building[idx(lx,ly)]!==BUILD.FENCE){
+                    a.x=lx;a.y=ly;a.act='clearing the fence in one hungry leap';
+                  }
+                }
+              }
+            }
+          }
         }else{
           // the shallows: bears above all know how to take salmon
           const sal=nearAnimal(a.x,a.y,2,o=>SPECIES[o.sp].river);
@@ -4314,11 +4476,13 @@ function wormAnimalUpdate(a,sp,dead){
   if(a.dom!==undefined){ // livestock in worm worlds keeps its home-pull outside the brain
     const hst=sim.settlements[a.dom];
     if(!hst||hst.razed||!hst.popC)a.dom=undefined;
-    else if(Math.max(Math.abs(hst.x-a.x),Math.abs(hst.y-a.y))>7){
-      a.act='returning to the herd at '+hst.nm;
-      const nx=a.x+Math.sign(hst.x-a.x),ny=a.y+Math.sign(hst.y-a.y);
-      if(inb(nx,ny)&&passable(idx(nx,ny)))({x:a.x,y:a.y}={x:nx,y:ny});
-      return;
+    else{
+      const tx2=hst.pen?((hst.pen.x0+hst.pen.x1)>>1):hst.x, ty2=hst.pen?((hst.pen.y0+hst.pen.y1)>>1):hst.y;
+      if(Math.max(Math.abs(tx2-a.x),Math.abs(ty2-a.y))>(hst.pen?2:7)){
+        a.act='returning to the '+(hst.pen?'pen':'herd')+' at '+hst.nm;
+        if(!stepAnimal(a,Math.sign(tx2-a.x),Math.sign(ty2-a.y),false)){const k=ri(0,7);stepAnimal(a,DX8[k],DY8[k],false)}
+        return;
+      }
     }
   }
   if(sp.pred){
@@ -4724,12 +4888,16 @@ function monthly(){
     if(st.popC>st.houses*5&&st.stock.wood>=25){st.stock.wood-=25;buildStruct(st,BUILD.HOUSE)}
     else if(st.farms<Math.ceil(st.popC/4.5)&&st.stock.wood>=12){st.stock.wood-=12;buildStruct(st,BUILD.FARM)}
     else if(!st.market&&st.popC>=25&&st.stock.wood>=30){st.stock.wood-=30;buildStruct(st,BUILD.MARKET)}
+    else if((st.stores||0)<1+Math.floor(st.popC/90)&&st.popC>=20&&st.stock.wood>=woodCap(st)*0.85&&st.stock.wood>=30){
+      st.stock.wood-=25;buildStruct(st,BUILD.STORE); // the stacks keep brimming: raise a roof over the timber
+    }
     else if(!st.temple&&st.religion>=0&&st.popC>=30&&st.stock.stone>=20){st.stock.stone-=20;buildStruct(st,BUILD.TEMPLE)}
     else if(!st.keep&&f.capital===st.id&&facKnows(f,'masonry')&&st.stock.stone>=45){st.stock.stone-=45;buildStruct(st,BUILD.KEEP)}
     else if(facKnows(f,'masonry')&&st.walls<Math.min(8,Math.floor(st.popC/12))&&st.stock.stone>=15){st.stock.stone-=15;buildStruct(st,BUILD.WALL)}
     // prices settle monthly; debts are called or repaid
     econMonthly(st);
     if(typeof householdMonthly==='function')householdMonthly(st);
+    maybeBuildPen(st);
     // sanitation: dense towns breed sickness in proportion to their size and crowding — cities are sinks, not fountains
     if(st.popC>120){
       const crowd2=st.popC/(st.houses*6+6);
@@ -4934,6 +5102,21 @@ function yearly(){
   // the green world takes its own census; regrowth is no longer scripted here,
   // it happens tile by tile in the vegetation engine as seeds and rain allow
   vegYearly();
+  graveyardYearly();
+  for(const st of sim.settlements){
+    if(st.razed||!st.pen)continue;
+    // upkeep is logs or rot
+    if(st.stock.wood>=2){st.stock.wood-=2;st.pen.cond=Math.min(1,st.pen.cond+0.22)}
+    st.pen.cond-=0.10;
+    if(st.pen.cond<=0){
+      for(let y2=st.pen.y0;y2<=st.pen.y1;y2++)for(let x2=st.pen.x0;x2<=st.pen.x1;x2++){
+        const j=idx(x2,y2);
+        if(world.building[j]===BUILD.FENCE)world.building[j]=BUILD.NONE;
+      }
+      logEvent('misc','The fence around the pens of '+st.nm+' has rotted and fallen.',st.pen.x0,st.pen.y0,{sett:st.id},{cause:'no logs spared for its upkeep'});
+      st.pen=null;terrainDirty=true;
+    }
+  }
   {
     const W=world.W;
     for(let i=0;i<W*world.H;i++){
@@ -6516,6 +6699,27 @@ function renderTile(x,y){
   const bld=world.building[i];
   if(bld)h+='<div class="kv"><div class="k">Structure</div><div class="v">'+BUILD_DEF[bld].name+'</div></div>';
   if(world.resource[i])h+='<div class="kv"><div class="k">Resource</div><div class="v">'+RES_DEF[world.resource[i]].name+'</div></div>';
+  if(world.building[i]===BUILD.GRAVE){
+    const sid2=world.settleId[i];
+    const gst=sid2>=0?sim.settlements[sid2]:null;
+    if(gst&&gst.gy){
+      h+='<h3>The graveyard of '+esc(gst.nm)+'</h3>';
+      const gy=gst.gy;
+      const mons=gy.graves.filter(g2=>g2.w===-1);
+      if(mons.length){
+        h+='<div class="sub" style="font-size:11px">monuments, kept whatever memory does</div>';
+        for(const g2 of mons.slice(0,5)){const soul=getP(g2.p);if(soul)h+='<div style="font-size:12px">† '+L('person',g2.p,soul.nm+' '+soul.sur)+' <span class="sub">Y'+Math.floor(g2.d/DAYS_Y)+'</span></div>'}
+      }
+      const fresh=gy.graves.filter(g2=>g2.w>=0&&g2.w<8).slice(-8);
+      if(fresh.length){
+        h+='<div class="sub" style="font-size:11px;margin-top:4px">stones still visited, still read</div>';
+        for(const g2 of fresh){const soul=getP(g2.p);h+='<div style="font-size:12px">+ '+(soul?L('person',g2.p,soul.nm+' '+soul.sur):'a name lost')+' <span class="sub">Y'+Math.floor(g2.d/DAYS_Y)+'</span></div>'}
+      }
+      const worn=gy.graves.filter(g2=>g2.w>=8).length;
+      if(worn)h+='<div class="sub" style="margin-top:4px">'+worn+' stones weathering, their rememberers gone</div>';
+      if(gy.old)h+='<div class="sub">'+gy.old+' worn beyond any name</div>';
+    }
+  }
   if(world.veg&&!isWater(b)&&b!==B.PEAK){
     const s2=world.vsp[i];
     h+='<h3>The living ground</h3><div class="kv">';
@@ -6694,12 +6898,18 @@ function renderSett(id){
   h+='<div class="statgrid"><div><div class="statnum">'+(st.popC||settPop(st))+'</div><div class="statlab">Souls</div></div>'+
      '<div><div class="statnum">'+Math.round(typeof foodTotal==='function'?foodTotal(st):st.stock.food||0)+'</div><div class="statlab">Food</div></div></div>';
   h+='<div class="kv">';
-  h+='<div class="k">Wood</div><div class="v">'+Math.round(st.stock.wood)+'</div>';
+  h+='<div class="k">Timber</div><div class="v">'+Math.round(st.stock.wood)+' of '+(typeof woodCap==='function'?woodCap(st):100)+' logs the stacks can hold</div>';
   h+='<div class="k">Stone</div><div class="v">'+Math.round(st.stock.stone)+'</div>';
   h+='<div class="k">Wealth</div><div class="v">'+Math.round(st.wealth||0)+'</div>';
   if(st.steward!==undefined){const sw=sim.people.get(st.steward);
     if(sw)h+='<div class="k">Steward</div><div class="v">'+L('person',sw.id,fullName(sw))+(sw.loyal!==undefined?' <span class="sub">loyalty '+Math.round(sw.loyal*100)+'%</span>':'')+'</div>';}
-  h+='<div class="k">Buildings</div><div class="v">'+st.houses+' houses · '+st.farms+' fields'+(st.market?' · market':'')+(st.temple?' · temple':'')+(st.keep?' · keep':'')+(st.walls?' · walls':'')+'</div>';
+  h+='<div class="k">Buildings</div><div class="v">'+st.houses+' houses · '+st.farms+' fields'+((st.stores||0)?' · '+st.stores+' storehouse'+(st.stores>1?'s':''):'')+(st.market?' · market':'')+(st.temple?' · temple':'')+(st.keep?' · keep':'')+(st.walls?' · walls':'')+'</div>';
+  if(st.pen)h+='<div class="k">Pen</div><div class="v">a fenced pasture, timbers '+(st.pen.cond>0.66?'sound':st.pen.cond>0.33?'weathering':'rotting')+'</div>';
+  if(st.lvLost&&!st.pen)h+='<div class="k">Herds</div><div class="v" style="color:#d9a05a">'+st.lvLost+' head taken by beasts; the town has no fence</div>';
+  if(st.gy&&(st.gy.graves.length||st.gy.old)){
+    const mon=st.gy.graves.filter(g2=>g2.w===-1).length;
+    h+='<div class="k">Graveyard</div><div class="v">'+st.gy.graves.length+' graves'+(mon?', '+mon+' monuments':'')+(st.gy.old?', and '+st.gy.old+' stones beyond all memory':'')+'</div>';
+  }
   if(st.homeless)h+='<div class="k">Homeless</div><div class="v" style="color:#d9a05a">'+st.homeless+' souls sleep in the lanes; the houses are full</div>';
   if(st.lvTxt)h+='<div class="k">Livestock</div><div class="v">'+esc(st.lvTxt)+(st.hasHorse?' · mounted':'')+'</div>';
   if(st.religion>=0&&sim.religions[st.religion])h+='<div class="k">Faith</div><div class="v">'+L('religion',st.religion,sim.religions[st.religion].nm)+'</div>';
