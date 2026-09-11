@@ -4458,8 +4458,7 @@ function instinctAnimalUpdate(a,sp,dead){
     carc=nearestCorpse(a.x,a.y,6);
     if(carc){
       const cs=corpseStage(carc);
-      if(cs==='bones'||(cs==='rotten'&&scavAff<0.9))carc=null;
-      else if(a.dom!==undefined&&carc.sp===a.sp)carc=null; // a kept animal will not eat its own kind
+      if(cs==='bones'||(cs==='rotten'&&scavAff<0.9))carc=null; // pigs are pigs, kept or wild: carrion is carrion
       else if(!a.sense)a.sense='smells carrion, '+Math.max(Math.abs(carc.x-a.x),Math.abs(carc.y-a.y))+' tiles off';
     }
   }
