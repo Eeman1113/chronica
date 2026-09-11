@@ -91,6 +91,11 @@ The default remains classic instincts. Brains are budgeted so 100x speed still w
 
 ![A threatened deer and its live 300-neuron nervous system in the inspector](screenshots/11-worm-brain.jpg)
 
+### The sea is crewed
+Every hull that leaves a harbor sails with named souls aboard. Fishing boats take a fisher and a hand from the town; trade cogs take a trader to strike the bargain and a sailor to work the sheets; settler ships carry whole families and war fleets carry the host. Click any ship and her panel opens: kind, whose colors she flies, her port, her heading, her cargo, her mission in plain words, and everyone aboard by name and role, each a clickable life. Trade cogs sell their cargo at the far quay and sail home along their own wake; a crew with no way home settles where the sea left them. And the sea takes its toll: any hull can founder in a storm, coast huggers least of all, and when a ship goes down her crew drowns with her, every death recorded and the loss written into the chronicle with its cause.
+
+![A fishing boat inspected at sea: her colors, her port, her mission, and both hands aboard by name](screenshots/25-ship.jpg)
+
 ### The sea
 Coastal towns put to sea: fishing boats work the water and feed their harbor, trade ships run routes between ports carrying wealth, faith, and sometimes plague, settler ships colonize empty islands, and armies that cannot march to an enemy take ship and land on hostile shores. Island maps fight completely different wars.
 

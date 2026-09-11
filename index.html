@@ -4836,7 +4836,7 @@ function assignProfessions(){
     if(st.razed)continue;
     const adults=[];
     for(const p of sim.people.values()){
-      if(p.home!==st.id||p.inArmy)continue;
+      if(p.home!==st.id||p.inArmy||p.sea)continue; // a hand at sea keeps the trade they sailed with
       const age=(sim.day-p.born)/DAYS_Y;
       if(p.prof==='leader')continue;
       if(age<16){p.prof='child';continue}
