@@ -3059,15 +3059,31 @@ function stepAlong(e){
   e.x=i%world.W;e.y=(i/world.W)|0;
   if(e.pi>=e.path.length){e.path=null;e.pi=0}
 }
+function homeTile(p){
+  // a family keeps one house: everyone of a surname walks back to the same door, not the town square
+  const st=sim.settlements[p.home];
+  if(!st||st.razed)return null;
+  if(p.hst===p.home&&p.hx!==undefined){
+    const i=idx(p.hx,p.hy);
+    if(world.building[i]===BUILD.HOUSE&&world.settleId[i]===st.id)return{x:p.hx,y:p.hy};
+  }
+  const houses=[];
+  for(const i of st.tiles)if(world.building[i]===BUILD.HOUSE)houses.push(i);
+  if(!houses.length)return{x:st.x,y:st.y};
+  const h=houses[(hashStr(p.sur||'')>>>0)%houses.length];
+  p.hst=p.home;p.hx=h%world.W;p.hy=(h/world.W)|0;
+  return{x:p.hx,y:p.hy};
+}
 function maybeStartTrip(p){
   const st=sim.settlements[p.home];
   if(!st||st.razed)return;
-  const atHome=Math.abs(p.x-st.x)<=5&&Math.abs(p.y-st.y)<=5;
-  if(!atHome){ // walk home
-    const far=Math.max(Math.abs(p.x-st.x),Math.abs(p.y-st.y))>25;
-    if(far&&pathBudget>0){pathBudget--;p.path=findPath(p.x,p.y,st.x,st.y,1500)}
-    if(!p.path)p.path=greedyPath(p.x,p.y,st.x,st.y,40);
-    if(!p.path){p.x=st.x;p.y=st.y} // hopelessly stuck → rejoin home
+  const hm=homeTile(p)||{x:st.x,y:st.y};
+  const atHome=Math.abs(p.x-hm.x)<=4&&Math.abs(p.y-hm.y)<=4;
+  if(!atHome){ // walk home, to the family's own house
+    const far=Math.max(Math.abs(p.x-hm.x),Math.abs(p.y-hm.y))>25;
+    if(far&&pathBudget>0){pathBudget--;p.path=findPath(p.x,p.y,hm.x,hm.y,1500)}
+    if(!p.path)p.path=greedyPath(p.x,p.y,hm.x,hm.y,40);
+    if(!p.path){p.x=hm.x;p.y=hm.y} // hopelessly stuck → rejoin home
     p.pi=0;
     return;
   }
