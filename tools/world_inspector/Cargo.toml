@@ -1,0 +1,7 @@
+[package]
+name = "world_inspector"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+chronica-engine = { path = "../../engine" }

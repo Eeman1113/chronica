@@ -1,0 +1,13 @@
+[package]
+name = "chronica-engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+bincode.workspace = true
+rayon.workspace = true
+
+[lib]
+name = "chronica_engine"
+path = "src/lib.rs"

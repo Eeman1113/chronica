@@ -1,0 +1,8 @@
+[package]
+name = "sim_runner"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+chronica-engine = { path = "../../engine" }
+rayon.workspace = true

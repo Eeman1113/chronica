@@ -25,3 +25,21 @@ Consequences: workspace = cargo workspace matching the §4.1 layout; determinism
 enforced by the type system (Send/Sync — data races are compile errors); no `unsafe` in engine
 crates without a DECISIONS entry justifying it; CI = `cargo test` + determinism reference-hash
 checks; `cargo bench`/criterion for the Stage 8 harness.
+
+**D-007 (2026-09-16) — Base tick = 1 simulated day; encounters resolve in deterministic sub-steps.**
+The clock is hierarchical (SIMULATION_MODEL.md) and the tick length is a single constant, but the
+scheduler's atom is the day, matching the prototype's calendar (360-day year). Where day-atomicity
+would force single-dice resolution (combat, pursuit), the action-resolution phase runs bounded
+deterministic sub-step loops within the day instead. Rationale: emergence tests require centuries
+of simulation on a laptop; a sub-day global atom multiplies all costs ~24× for fidelity that only
+a few systems need. Cadence is a computation choice (§2.10); no entity state or rules differ.
+
+**D-008 (2026-09-16) — Single `chronica-engine` crate with one module per domain (ARCHITECTURE.md
+layout's "crates | modules" option), plus separate crates for tools and renderer.**
+Faster builds and less boilerplate during the build-out; module boundaries mirror the documented
+crate map exactly, so splitting into crates later is mechanical. The renderer is a separate crate
+that depends only on the inspection module's public API.
+
+**D-009 (2026-09-16) — No HashMap in serialized state.**
+Byte-identical saves are a hard requirement; std HashMap serializes in random iteration order.
+Serialized state uses Vec/BTreeMap only; derived indices are #[serde(skip)] and rebuilt on load.

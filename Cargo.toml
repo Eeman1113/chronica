@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = ["engine", "tools/sim_runner", "tools/world_inspector", "tools/replay"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+bincode = "1.3"
+rayon = "1.10"
+
+[profile.release]
+debug = true
+lto = "thin"
+
+# Determinism note: no float fast-math flags anywhere; default rustc float semantics are IEEE and
+# reproducible on a given target. See docs/DETERMINISM.md.
