@@ -18,3 +18,10 @@ The 8,452-line prototype was audited by six parallel readers covering contiguous
 
 **D-005 (2026-09-16) — The prototype's own emergent-direction refactors are kept as design seeds, not as code.**
 The prototype is *mid-migration* toward the rules: rebellion is already grievance-driven ("rebellion by dice is gone in every mode", line 5696), pro-mode has plots recruited person-by-person, and `proQuarterlySocial` already restricts friendship pools to co-location/co-profession/shared institutions. These are treated as statements of intent that the engine completes (full causality), not as implementations to port.
+
+**D-006 (2026-09-16) — Implementation language: Rust. RESOLVES D-001.**
+User decision at the Stage 0 gate. Engine crates in Rust; renderer on Rust + wgpu + egui per §0.
+Consequences: workspace = cargo workspace matching the §4.1 layout; determinism-under-threads
+enforced by the type system (Send/Sync — data races are compile errors); no `unsafe` in engine
+crates without a DECISIONS entry justifying it; CI = `cargo test` + determinism reference-hash
+checks; `cargo bench`/criterion for the Stage 8 harness.
