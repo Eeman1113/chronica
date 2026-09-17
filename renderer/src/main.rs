@@ -12,8 +12,11 @@ use eframe::egui;
 struct App {
     sim: Sim,
     running: bool,
-    speed: u32, // days per frame
+    speed: f32, // days per frame (fractional = slow motion)
+    day_accum: f32,
     tex: Option<egui::TextureHandle>,
+    cam: egui::Vec2, // world-space center (cells)
+    zoom: f32,       // pixels per cell
     selected_cell: Option<(i32, i32)>,
     selected_person: Option<usize>,
     selected_animal: Option<usize>,
@@ -26,8 +29,11 @@ impl App {
         App {
             sim: Sim::new(Config { seed, width: 192, height: 128 }),
             running: true,
-            speed: 1,
+            speed: 1.0,
+            day_accum: 0.0,
             tex: None,
+            cam: egui::vec2(96.0, 64.0),
+            zoom: 7.0,
             selected_cell: None,
             selected_person: None,
             selected_animal: None,
@@ -82,8 +88,10 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if self.running {
-            for _ in 0..self.speed {
+            self.day_accum += self.speed;
+            while self.day_accum >= 1.0 {
                 self.sim.tick();
+                self.day_accum -= 1.0;
             }
             ctx.request_repaint();
         }
@@ -95,7 +103,12 @@ impl eframe::App for App {
                 if ui.button(if self.running { "⏸ pause" } else { "▶ run" }).clicked() {
                     self.running = !self.running;
                 }
-                ui.add(egui::Slider::new(&mut self.speed, 1..=30).text("days/frame"));
+                ui.add(
+                    egui::Slider::new(&mut self.speed, 0.05..=30.0)
+                        .logarithmic(true)
+                        .text("days/frame"),
+                );
+                ui.label("(scroll = zoom, drag = pan)");
                 ui.separator();
                 ui.label(format!(
                     "people {}  events {}",
@@ -266,74 +279,174 @@ impl eframe::App for App {
                 ui.ctx().load_texture("map", img.clone(), egui::TextureOptions::NEAREST)
             });
             tex.set(img, egui::TextureOptions::NEAREST);
+
             let avail = ui.available_size();
-            let scale = (avail.x / self.sim.grid.w as f32)
-                .min(avail.y / self.sim.grid.h as f32)
-                .max(1.0);
-            let size = egui::vec2(
-                self.sim.grid.w as f32 * scale,
-                self.sim.grid.h as f32 * scale,
-            );
-            let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
-            ui.painter().image(
-                tex.id(),
-                rect,
-                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                egui::Color32::WHITE,
-            );
-            let painter = ui.painter();
-            // people and animals as dots (reads only)
-            for h in self.sim.humans.list.iter().filter(|h| h.alive) {
-                let p = egui::pos2(
-                    rect.min.x + (h.x as f32 + 0.5) * scale,
-                    rect.min.y + (h.y as f32 + 0.5) * scale,
-                );
-                painter.circle_filled(p, (scale * 0.45).max(1.5), egui::Color32::from_rgb(250, 240, 120));
+            let (rect, resp) =
+                ui.allocate_exact_size(avail, egui::Sense::click_and_drag());
+            let ww = self.sim.grid.w as f32;
+            let wh = self.sim.grid.h as f32;
+
+            // camera controls: scroll zooms about the cursor, drag pans
+            let scroll = ui.input(|i| i.raw_scroll_delta.y);
+            if scroll != 0.0 {
+                if let Some(ptr) = resp.hover_pos() {
+                    let world_before = self.cam
+                        + (ptr - rect.center()) / self.zoom;
+                    self.zoom = (self.zoom * (1.0 + scroll * 0.0015)).clamp(3.0, 64.0);
+                    let world_after = self.cam + (ptr - rect.center()) / self.zoom;
+                    self.cam += world_before - world_after;
+                }
             }
-            for a in self.sim.animals.list.iter().filter(|a| a.alive) {
-                let p = egui::pos2(
-                    rect.min.x + (a.x as f32 + 0.5) * scale,
-                    rect.min.y + (a.y as f32 + 0.5) * scale,
-                );
-                let sp = &chronica_engine::species::ANIMALS[a.species as usize];
-                let col = if sp.prey.is_empty() {
-                    egui::Color32::from_rgb(200, 170, 130)
-                } else {
-                    egui::Color32::from_rgb(220, 80, 80)
-                };
-                painter.circle_filled(p, (scale * 0.3).max(1.0), col);
+            if resp.dragged() {
+                self.cam -= resp.drag_delta() / self.zoom;
             }
+            self.cam.x = self.cam.x.clamp(0.0, ww);
+            self.cam.y = self.cam.y.clamp(0.0, wh);
+
+            let to_screen = |wx: f32, wy: f32| -> egui::Pos2 {
+                rect.center() + (egui::vec2(wx, wy) - self.cam) * self.zoom
+            };
+            // visible world window as UV into the map texture
+            let half = rect.size() / (2.0 * self.zoom);
+            let uv = egui::Rect::from_min_max(
+                egui::pos2(
+                    (self.cam.x - half.x) / ww,
+                    (self.cam.y - half.y) / wh,
+                ),
+                egui::pos2(
+                    (self.cam.x + half.x) / ww,
+                    (self.cam.y + half.y) / wh,
+                ),
+            );
+            let painter = ui.painter_at(rect);
+            painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(8, 12, 24));
+            painter.image(tex.id(), rect, uv, egui::Color32::WHITE);
+
+            let visible = |x: i32, y: i32| -> bool {
+                (x as f32) > self.cam.x - half.x - 2.0
+                    && (x as f32) < self.cam.x + half.x + 2.0
+                    && (y as f32) > self.cam.y - half.y - 2.0
+                    && (y as f32) < self.cam.y + half.y + 2.0
+            };
+            let close_up = self.zoom >= 14.0;
+
+            // buildings
             for b in self.sim.objects.buildings.iter().filter(|b| b.exists) {
                 let (x, y) = self.sim.grid.xy(b.cell as usize);
-                let p = egui::pos2(
-                    rect.min.x + (x as f32 + 0.5) * scale,
-                    rect.min.y + (y as f32 + 0.5) * scale,
-                );
+                if !visible(x, y) {
+                    continue;
+                }
+                let p = to_screen(x as f32 + 0.5, y as f32 + 0.5);
                 painter.rect_filled(
-                    egui::Rect::from_center_size(p, egui::vec2(scale * 0.8, scale * 0.8)),
-                    0.0,
+                    egui::Rect::from_center_size(
+                        p,
+                        egui::vec2(self.zoom * 0.85, self.zoom * 0.85),
+                    ),
+                    2.0,
                     egui::Color32::from_rgb(160, 120, 70),
                 );
+                if close_up && b.food_store > 0.5 {
+                    painter.text(
+                        p,
+                        egui::Align2::CENTER_CENTER,
+                        format!("{:.0}", b.food_store),
+                        egui::FontId::proportional(self.zoom * 0.45),
+                        egui::Color32::from_rgb(255, 235, 180),
+                    );
+                }
             }
-            for (name, (x, y)) in chronica_engine::society::living_settlements(&self.sim) {
-                let p = egui::pos2(
-                    rect.min.x + x as f32 * scale,
-                    rect.min.y + (y as f32 - 2.0) * scale,
-                );
-                painter.text(
+            // animals: colored dots; at close-up, species initial + what they're doing
+            for (ai, a) in self.sim.animals.list.iter().enumerate().filter(|(_, a)| a.alive) {
+                if !visible(a.x, a.y) {
+                    continue;
+                }
+                let sp = &chronica_engine::species::ANIMALS[a.species as usize];
+                let p = to_screen(a.x as f32 + 0.5, a.y as f32 + 0.5);
+                let col = if sp.prey.is_empty() {
+                    egui::Color32::from_rgb(205, 175, 132)
+                } else {
+                    egui::Color32::from_rgb(225, 80, 80)
+                };
+                painter.circle_filled(p, (self.zoom * 0.28).max(1.5), col);
+                if close_up {
+                    let doing = match a.rationale.chosen {
+                        0 => "fleeing!",
+                        1 => "→ water",
+                        2 => "grazing",
+                        3 => "hunting!",
+                        4 => "courting",
+                        5 => "w/ herd",
+                        6 => "resting",
+                        _ => "roaming",
+                    };
+                    painter.text(
+                        p + egui::vec2(0.0, -self.zoom * 0.45),
+                        egui::Align2::CENTER_BOTTOM,
+                        format!("{} {}", sp.name, doing),
+                        egui::FontId::proportional((self.zoom * 0.38).min(13.0)),
+                        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 210),
+                    );
+                }
+                let _ = ai;
+            }
+            // people: yellow dots; at close-up, name + current action
+            for h in self.sim.humans.list.iter().filter(|h| h.alive) {
+                if !visible(h.x, h.y) {
+                    continue;
+                }
+                let p = to_screen(h.x as f32 + 0.5, h.y as f32 + 0.5);
+                painter.circle_filled(
                     p,
+                    (self.zoom * 0.36).max(2.0),
+                    egui::Color32::from_rgb(252, 240, 110),
+                );
+                if close_up {
+                    let doing = match h.current {
+                        chronica_engine::humans::HumanAction::Gather => "gathering",
+                        chronica_engine::humans::HumanAction::Drink { .. } => "→ water",
+                        chronica_engine::humans::HumanAction::EatStored => "eating",
+                        chronica_engine::humans::HumanAction::Hunt { .. } => "hunting!",
+                        chronica_engine::humans::HumanAction::ChopWood => "chopping",
+                        chronica_engine::humans::HumanAction::Build { .. } => "building",
+                        chronica_engine::humans::HumanAction::Deposit => "storing",
+                        chronica_engine::humans::HumanAction::Socialize { .. } => "talking",
+                        chronica_engine::humans::HumanAction::Court { .. } => "courting",
+                        chronica_engine::humans::HumanAction::TendFarm => "farming",
+                        chronica_engine::humans::HumanAction::Rest => "resting",
+                        chronica_engine::humans::HumanAction::Flee { .. } => "fleeing!",
+                        chronica_engine::humans::HumanAction::MoveTo { .. } => "walking",
+                        chronica_engine::humans::HumanAction::Idle => "idling",
+                    };
+                    painter.text(
+                        p + egui::vec2(0.0, -self.zoom * 0.5),
+                        egui::Align2::CENTER_BOTTOM,
+                        format!("{} — {}", h.name, doing),
+                        egui::FontId::proportional((self.zoom * 0.42).min(14.0)),
+                        egui::Color32::WHITE,
+                    );
+                }
+            }
+            // settlement names
+            for (name, (x, y)) in chronica_engine::society::living_settlements(&self.sim) {
+                if !visible(x, y) {
+                    continue;
+                }
+                painter.text(
+                    to_screen(x as f32, y as f32 - 2.0),
                     egui::Align2::CENTER_BOTTOM,
                     name,
-                    egui::FontId::proportional(12.0),
+                    egui::FontId::proportional(14.0),
                     egui::Color32::WHITE,
                 );
             }
+
+            // click (not drag) selects
             if resp.clicked() {
                 if let Some(pos) = resp.interact_pointer_pos() {
-                    let cx = ((pos.x - rect.min.x) / scale) as i32;
-                    let cy = ((pos.y - rect.min.y) / scale) as i32;
+                    let world = self.cam + (pos - rect.center()) / self.zoom;
+                    let cx = world.x.floor() as i32;
+                    let cy = world.y.floor() as i32;
                     self.selected_cell = Some((cx, cy));
-                    // nearest person / animal within 2 cells
                     self.selected_person = self
                         .sim
                         .humans

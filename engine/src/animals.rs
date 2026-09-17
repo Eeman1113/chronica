@@ -143,7 +143,7 @@ pub fn generate(sim: &mut Sim) {
         (crate::species::A_HARE, 0.010),
         (crate::species::A_DEER, 0.004),
         (crate::species::A_BOAR, 0.002),
-        (crate::species::A_WOLF, 0.0004),
+        (crate::species::A_WOLF, 0.0007),
         (crate::species::A_BEAR, 0.0003),
         (crate::species::A_SHEEP, 0.002),
         (crate::species::A_HORSE, 0.001),
@@ -246,8 +246,40 @@ pub fn tick(sim: &mut Sim) {
                 Some(((herd_sum.0 / herd_sum.2) as i32, (herd_sum.1 / herd_sum.2) as i32));
         }
         // forage: edible biomass here + best nearby cell scanned in a small ring
+        let edible_local = |cell: usize| -> f32 {
+            if grid.surface[cell] > 0.12 {
+                return plants
+                    .by_cell
+                    .get(cell)
+                    .map(|v| {
+                        v.iter()
+                            .map(|&pi| {
+                                let pl = &plants.list[pi as usize];
+                                if pl.species == crate::species::SP_REED {
+                                    pl.biomass * PLANTS[pl.species as usize].edible
+                                } else {
+                                    0.0
+                                }
+                            })
+                            .sum()
+                    })
+                    .unwrap_or(0.0);
+            }
+            plants
+                .by_cell
+                .get(cell)
+                .map(|v| {
+                    v.iter()
+                        .map(|&pi| {
+                            let pl = &plants.list[pi as usize];
+                            pl.biomass * PLANTS[pl.species as usize].edible
+                        })
+                        .sum()
+                })
+                .unwrap_or(0.0)
+        };
         let here = grid.idx(a.x, a.y).unwrap();
-        p.forage_here = edible_at(plants, here);
+        p.forage_here = edible_local(here);
         if sp.diet != Diet::Carnivore {
             let fr = sp.perception;
             let mut best = 0.0;
@@ -257,7 +289,7 @@ pub fn tick(sim: &mut Sim) {
                         if grid.ocean[j] {
                             continue;
                         }
-                        let e = edible_at(plants, j);
+                        let e = edible_local(j);
                         if e > best + 0.05 {
                             best = e;
                             p.forage_near = Some((a.x + dx, a.y + dy));
@@ -413,6 +445,47 @@ pub fn tick(sim: &mut Sim) {
         if !sim.animals.list[ai].alive {
             continue;
         }
+        // a flood under your feet is an emergency: wade toward the nearest dry ground
+        {
+            let (x, y) = {
+                let a = &sim.animals.list[ai];
+                (a.x, a.y)
+            };
+            if let Some(here) = sim.grid.idx(x, y) {
+                if too_deep(sim, here) {
+                    let mut best: Option<((i32, i32), f32)> = None;
+                    for r in 1..=4i32 {
+                        for dy in -r..=r {
+                            for dx in -r..=r {
+                                if dx.abs() != r && dy.abs() != r {
+                                    continue;
+                                }
+                                if let Some(j) = sim.grid.idx(x + dx, y + dy) {
+                                    if !sim.grid.ocean[j] {
+                                        let d = sim.grid.surface[j];
+                                        if d < 0.12
+                                            && best.map(|(_, bd)| d < bd).unwrap_or(true)
+                                        {
+                                            best = Some(((x + dx, y + dy), d));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if best.is_some() {
+                            break;
+                        }
+                    }
+                    if let Some((to, _)) = best {
+                        // wading ignores the depth rule — that's what escaping a flood is
+                        let a = &mut sim.animals.list[ai];
+                        a.x = to.0;
+                        a.y = to.1;
+                        a.fatigue = (a.fatigue + 0.3).min(1.5);
+                    }
+                }
+            }
+        }
         let sp = &ANIMALS[sim.animals.list[ai].species as usize];
         let (starved, parched, aged, froze, birth) = {
             let a = &mut sim.animals.list[ai];
@@ -531,19 +604,46 @@ fn grid_fresh(sim: &Sim, x: i32, y: i32) -> bool {
     sim.grid.idx(x, y).map(|i| sim.grid.is_fresh_water(i)).unwrap_or(false)
 }
 
-fn edible_at(plants: &crate::vegetation::Plants, cell: usize) -> f32 {
-    plants
+#[allow(dead_code)]
+fn edible_at_g(sim: &Sim, cell: usize) -> f32 {
+    if sim.grid.surface[cell] > 0.12 {
+        // drowned ground: only reeds stand above the water
+        return sim
+            .plants
+            .by_cell
+            .get(cell)
+            .map(|v| {
+                v.iter()
+                    .map(|&pi| {
+                        let p = &sim.plants.list[pi as usize];
+                        if p.species == crate::species::SP_REED {
+                            p.biomass * PLANTS[p.species as usize].edible
+                        } else {
+                            0.0
+                        }
+                    })
+                    .sum()
+            })
+            .unwrap_or(0.0);
+    }
+    sim.plants
         .by_cell
         .get(cell)
         .map(|v| {
             v.iter()
                 .map(|&pi| {
-                    let p = &plants.list[pi as usize];
+                    let p = &sim.plants.list[pi as usize];
                     p.biomass * PLANTS[p.species as usize].edible
                 })
                 .sum()
         })
         .unwrap_or(0.0)
+}
+
+/// Deep water is no place for a land animal (floods are real and must be fled).
+#[inline]
+fn too_deep(sim: &Sim, j: usize) -> bool {
+    sim.grid.ocean[j] || sim.grid.surface[j] > 0.12
 }
 
 /// Step toward a destination, stopping ON it.
@@ -561,7 +661,7 @@ fn move_animal_toward(sim: &mut Sim, ai: usize, to: (i32, i32), steps: i32) {
             (a.x + dir.0, a.y + dir.1)
         };
         match sim.grid.idx(nx, ny) {
-            Some(j) if !sim.grid.ocean[j] => {
+            Some(j) if !too_deep(sim, j) => {
                 let a = &mut sim.animals.list[ai];
                 a.x = nx;
                 a.y = ny;
@@ -578,7 +678,7 @@ fn move_animal(sim: &mut Sim, ai: usize, dir: (i32, i32), steps: i32) {
             (a.x + dir.0, a.y + dir.1)
         };
         match sim.grid.idx(nx, ny) {
-            Some(j) if !sim.grid.ocean[j] => {
+            Some(j) if !too_deep(sim, j) => {
                 let a = &mut sim.animals.list[ai];
                 a.x = nx;
                 a.y = ny;
@@ -599,6 +699,7 @@ fn graze(sim: &mut Sim, ai: usize) {
             (a.hunger.max(0.3) * sp.mass * 0.006).max(0.05),
         )
     };
+    let flooded = sim.grid.surface[cell] > 0.12;
     let Some(pids) = sim.plants.by_cell.get(cell).cloned() else { return };
     let mut eaten = 0.0f32;
     let mut kills: Vec<usize> = Vec::new();
@@ -609,6 +710,9 @@ fn graze(sim: &mut Sim, ai: usize) {
         let p = &mut sim.plants.list[pi as usize];
         if !p.alive {
             continue;
+        }
+        if flooded && p.species != crate::species::SP_REED {
+            continue; // you cannot graze under water
         }
         let ed = PLANTS[p.species as usize].edible;
         if ed < 0.2 {
@@ -701,8 +805,10 @@ fn hunt(sim: &mut Sim, ai: usize, ti: usize, deaths: &mut Vec<(usize, DeathCause
         let eaten = {
             let a = &mut sim.animals.list[ai];
             let asp = &ANIMALS[a.species as usize];
-            let meal = (asp.mass * 0.25).min(t_mass);
-            a.hunger = (a.hunger - meal / (asp.mass * 0.3)).max(0.0);
+            // a predator gorges: even small prey is worth days (real canid ecology)
+            let meal = (asp.mass * 0.35).min(t_mass * 0.7);
+            a.hunger = (a.hunger - meal / (asp.mass * 0.18)).max(0.0);
+            a.condition = (a.condition + 0.05).min(1.0);
             meal
         };
         sim.animals.corpses.push(Corpse {
