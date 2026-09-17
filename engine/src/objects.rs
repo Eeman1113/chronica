@@ -19,10 +19,19 @@ pub struct Building {
     pub built_day: u64,
     pub builder: PersonId,
     pub wood_used: f32,   // real logs from real felled trees
+    pub progress: f32,    // 0..1 — a house is raised over days of real work
     pub condition: f32,   // decays; repaired with more wood
     pub food_store: f32,  // food mass actually deposited
     pub burned: bool,
     pub exists: bool,
+}
+
+impl Building {
+    /// A building shelters only when finished and sound.
+    #[inline]
+    pub fn standing(&self) -> bool {
+        self.exists && self.progress >= 1.0 && self.condition > 0.3
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

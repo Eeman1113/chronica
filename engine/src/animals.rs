@@ -982,13 +982,23 @@ fn hunt_human(sim: &mut Sim, ai: usize, hi: usize) {
             crowd += 1;
         }
     }
+    // a door to bar changes everything
+    let behind_walls = sim.objects.buildings.iter().any(|b| {
+        b.standing() && {
+            let (bx, by) = sim.grid.xy(b.cell as usize);
+            (bx - hx).abs().max((by - hy).abs()) <= 1
+        }
+    });
     let (p_kill, beast_id) = {
         let a = &sim.animals.list[ai];
         let h = &sim.humans.list[hi];
         let asp = &ANIMALS[a.species as usize];
         let att = asp.mass * a.condition * (0.5 + a.genes[2] * 0.5);
-        let def = 30.0 * (0.5 + h.traits[1] * 0.6 + h.skills[crate::humans::SK_FIGHT] * 0.8)
+        let mut def = 30.0 * (0.5 + h.traits[1] * 0.6 + h.skills[crate::humans::SK_FIGHT] * 0.8)
             + crowd as f32 * 9.0;
+        if behind_walls {
+            def *= 2.5;
+        }
         (((att / (att + def)) * 0.45).clamp(0.03, 0.6), Animals::id_of(ai))
     };
     let roll = sim.animals.list[ai].rng.chance(p_kill);

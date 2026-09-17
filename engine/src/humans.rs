@@ -511,7 +511,7 @@ fn perceive(sim: &Sim, hi: usize) -> HumanPercepts {
     // formal ownership/households arrive with Stage 5 institutions)
     let mut best_d = i32::MAX;
     for (bi, b) in sim.objects.buildings.iter().enumerate() {
-        if !b.exists || b.food_store < 0.3 {
+        if !b.standing() || b.food_store < 0.3 {
             continue;
         }
         let (bx, by) = grid.xy(b.cell as usize);
@@ -558,8 +558,22 @@ fn decide(sim: &Sim, hi: usize, p: &HumanPercepts) -> (HumanAction, HumanRationa
             * if h.hunger > 1.0 { 1.6 } else { 1.0 };
     }
     // shelter: homeless adults want a hut; homeowners keep stores stocked
-    if adult && h.home.is_none() && food_avail > 1.0 && h.hunger < 0.8 && h.nutrition > 0.45 {
-        r.build = 0.7 + h.traits[0] * 0.4;
+    let my_house_unfinished = h
+        .home
+        .some()
+        .map(|b| {
+            let bl = &sim.objects.buildings[b.index()];
+            bl.exists && bl.progress < 1.0
+        })
+        .unwrap_or(false);
+    if adult && food_avail > 1.0 && h.hunger < 0.8 {
+        let season = day % 360 / 90;
+        let winter_presses = if season == 2 { 0.5 } else { 0.0 }; // autumn urgency
+        if my_house_unfinished {
+            r.build = 1.0 + winter_presses;
+        } else if h.home.is_none() && h.nutrition > 0.45 {
+            r.build = 0.7 + h.traits[0] * 0.4 + winter_presses;
+        }
     }
     // farming: knowers of the technique work plots by their homes — sowing in the growing
     // seasons, harvesting when the wheat actually stands ripe. The consequence chain is real:
@@ -1046,6 +1060,24 @@ pub fn tick(sim: &mut Sim) {
             } else {
                 h.days_thirsty = 0;
             }
+            // winter nights: walls are the difference between cold and dying of it
+            let t_here = sim
+                .grid
+                .idx(h.x, h.y)
+                .map(|i| sim.grid.temp[i])
+                .unwrap_or(0.0);
+            if t_here < -4.0 {
+                let sheltered = sim.objects.buildings.iter().any(|b| {
+                    b.standing() && {
+                        let (bx, by) = sim.grid.xy(b.cell as usize);
+                        (bx - h.x).abs().max((by - h.y).abs()) <= 1
+                    }
+                });
+                if !sheltered {
+                    h.health -= 0.012 * (-t_here / 10.0).min(2.0);
+                    h.fatigue = (h.fatigue + 0.1).min(1.5);
+                }
+            }
             h.health = (h.health
                 + if h.nutrition > 0.4 { 0.005 } else { -0.01 })
             .clamp(0.0, 1.0);
@@ -1059,6 +1091,19 @@ pub fn tick(sim: &mut Sim) {
         };
         if aged {
             deaths.push((hi, DeathCause::Age, vec![]));
+            continue;
+        }
+        if sim.humans.list[hi].health <= 0.0 {
+            let t = sim
+                .grid
+                .idx(sim.humans.list[hi].x, sim.humans.list[hi].y)
+                .map(|i| sim.grid.temp[i])
+                .unwrap_or(0.0);
+            deaths.push((
+                hi,
+                DeathCause::Exposure,
+                vec![Cause::State(StateRef { what: StateKind::Temperature, value: t })],
+            ));
             continue;
         }
         if starved {
@@ -1107,6 +1152,11 @@ pub fn tick(sim: &mut Sim) {
         let cid = Humans::id_of(ci);
         add_rel(sim, mi, ci, RelKind::ParentOf, 2.0);
         add_rel(sim, ci, mi, RelKind::ChildOf, 2.0);
+        {
+            let mhome = sim.humans.list[mi].home;
+            let c = &mut sim.humans.list[ci];
+            c.home = mhome; // born under the mother's roof
+        }
         if !father.is_none() {
             add_rel(sim, father.index(), ci, RelKind::ParentOf, 2.0);
             add_rel(sim, ci, father.index(), RelKind::ChildOf, 2.0);
@@ -1226,6 +1276,64 @@ pub fn tick(sim: &mut Sim) {
 
     for (hi, cause, causes) in deaths {
         kill_human(sim, hi, cause, causes);
+    }
+
+    // houses weather; unrepaired they fall to ruin
+    if day % 360 == 150 {
+        for bi in 0..sim.objects.buildings.len() {
+            let (fell, builder, cell) = {
+                let b = &mut sim.objects.buildings[bi];
+                if !b.exists || b.progress < 1.0 {
+                    continue;
+                }
+                b.condition -= 0.06;
+                (b.condition <= 0.3, b.builder, b.cell)
+            };
+            if fell {
+                sim.objects.buildings[bi].exists = false;
+                let bid = Objects::building_id(bi);
+                sim.history.push(
+                    day,
+                    EntityRef::Person(builder),
+                    EventKind::BuildingLost {
+                        building: EntityRef::Building(bid),
+                        to_flood: false,
+                    },
+                    Some(cell),
+                    vec![],
+                );
+                for h in sim.humans.list.iter_mut() {
+                    if h.home == bid {
+                        h.home = crate::core::ids::BuildingId::NONE;
+                    }
+                }
+            }
+        }
+    }
+    // repair: a homeowner at home with logs shores the walls up
+    for hi in 0..n {
+        let (home, wood, pos) = {
+            let h = &sim.humans.list[hi];
+            if !h.alive {
+                continue;
+            }
+            (h.home, h.carried_wood, (h.x, h.y))
+        };
+        let Some(b) = home.some() else { continue };
+        let bi = b.index();
+        let needs = {
+            let bl = &sim.objects.buildings[bi];
+            bl.exists && bl.progress >= 1.0 && bl.condition < 0.8
+        };
+        if needs && wood >= 1.0 {
+            let (bx, by) = sim.grid.xy(sim.objects.buildings[bi].cell as usize);
+            if (bx - pos.0).abs().max((by - pos.1).abs()) <= 1 {
+                sim.humans.list[hi].carried_wood -= 1.0;
+                let bl = &mut sim.objects.buildings[bi];
+                bl.condition = (bl.condition + 0.25).min(1.0);
+                bl.wood_used += 1.0;
+            }
+        }
     }
 
     // memory decay: yearly pass, weakest fade but nothing is deleted from history
@@ -1358,7 +1466,7 @@ fn apply_action(
                     let h = &sim.humans.list[hi];
                     let mut best: Option<(usize, i32)> = None;
                     for (bi, b) in sim.objects.buildings.iter().enumerate() {
-                        if !b.exists || b.food_store < 0.3 {
+                        if !b.standing() || b.food_store < 0.3 {
                             continue;
                         }
                         let (bx, by) = sim.grid.xy(b.cell as usize);
@@ -1532,13 +1640,103 @@ fn apply_action(
             }
         }
         HumanAction::Build { kind } => {
+            // is my own house already rising? then today's work goes into it
+            let my_site = {
+                let h = &sim.humans.list[hi];
+                h.home.some().and_then(|b| {
+                    let bl = &sim.objects.buildings[b.index()];
+                    if bl.exists && bl.progress < 1.0 {
+                        Some(b.index())
+                    } else {
+                        None
+                    }
+                })
+            };
+            if let Some(bi) = my_site {
+                let (bx, by) = sim.grid.xy(sim.objects.buildings[bi].cell as usize);
+                let at_site = {
+                    let h = &sim.humans.list[hi];
+                    (h.x - bx).abs().max((h.y - by).abs()) <= 1
+                };
+                if !at_site {
+                    move_toward_h(sim, hi, (bx, by), 2);
+                    return;
+                }
+                let skill = sim.humans.list[hi].skills[SK_BUILD];
+                let b = &mut sim.objects.buildings[bi];
+                b.progress = (b.progress + 0.15 + skill * 0.1).min(1.0);
+                let done = b.progress >= 1.0;
+                let cell = b.cell;
+                {
+                    let h = &mut sim.humans.list[hi];
+                    h.fatigue = (h.fatigue + 0.25).min(1.5);
+                    h.skills[SK_BUILD] = (h.skills[SK_BUILD] + 0.006).min(1.0);
+                }
+                if done {
+                    // the finished house claims its ground: whatever grew here is cleared
+                    let pids: Vec<usize> = sim
+                        .plants
+                        .by_cell
+                        .get(cell as usize)
+                        .map(|v| v.iter().map(|&x| x as usize).collect())
+                        .unwrap_or_default();
+                    for pi in pids {
+                        crate::vegetation::kill_plant(
+                            sim,
+                            pi,
+                            DeathCause::Felled,
+                            vec![],
+                        );
+                    }
+                    sim.history.push(
+                        day,
+                        EntityRef::Person(Humans::id_of(hi)),
+                        EventKind::BuiltBuilding {
+                            building: EntityRef::Building(Objects::building_id(bi)),
+                        },
+                        Some(cell),
+                        vec![],
+                    );
+                }
+                return;
+            }
+            // claim a standing empty house before raising a new one
+            let empty_house = {
+                let h = &sim.humans.list[hi];
+                let mut found = None;
+                for (bi, b) in sim.objects.buildings.iter().enumerate() {
+                    if !b.standing() {
+                        continue;
+                    }
+                    let (bx, by) = sim.grid.xy(b.cell as usize);
+                    if (bx - h.x).abs().max((by - h.y).abs()) > 6 {
+                        continue;
+                    }
+                    let bid = Objects::building_id(bi);
+                    if !sim.humans.list.iter().any(|o| o.alive && o.home == bid) {
+                        found = Some(bi);
+                        break;
+                    }
+                }
+                found
+            };
+            if let Some(bi) = empty_house {
+                let bid = Objects::building_id(bi);
+                let h = &mut sim.humans.list[hi];
+                h.home = bid;
+                return;
+            }
+            // found a new frame with real timber
             let (cell, ok) = {
                 let h = &sim.humans.list[hi];
                 let cell = sim.grid.idx(h.x, h.y);
                 (cell, h.carried_wood >= 8.0)
             };
             let Some(cell) = cell else { return };
-            if !ok || sim.objects.building_at(cell as u32).is_some() {
+            if !ok
+                || sim.objects.building_at(cell as u32).is_some()
+                || sim.grid.surface[cell] > 0.1
+            {
                 return;
             }
             let bidx = sim.objects.buildings.len();
@@ -1548,6 +1746,7 @@ fn apply_action(
                 built_day: day,
                 builder: Humans::id_of(hi),
                 wood_used: 8.0,
+                progress: 0.15,
                 condition: 1.0,
                 food_store: 0.0,
                 burned: false,
@@ -1562,13 +1761,6 @@ fn apply_action(
                     h.home = bid;
                 }
             }
-            sim.history.push(
-                day,
-                EntityRef::Person(Humans::id_of(hi)),
-                EventKind::BuiltBuilding { building: EntityRef::Building(bid) },
-                Some(cell as u32),
-                vec![],
-            );
             // spouse moves in
             let spouse = sim.humans.list[hi].spouse;
             if let Some(s) = spouse.some() {

@@ -258,13 +258,93 @@ impl eframe::App for App {
                     ));
                     ui.separator();
                 }
+                ui.heading("Population");
+                let people_alive = chronica_engine::humans::population(&self.sim);
+                let children = self
+                    .sim
+                    .humans
+                    .list
+                    .iter()
+                    .filter(|h| {
+                        h.alive && (self.sim.clock.day as i64 - h.born) < 14 * 360
+                    })
+                    .count();
+                ui.label(format!("People: {people_alive}  (of whom {children} children)"));
+                let mut tame_counts = [0usize; 8];
+                for a in self.sim.animals.list.iter() {
+                    if a.alive && !a.tamed_by.is_none() {
+                        tame_counts[a.species as usize] += 1;
+                    }
+                }
+                for (i, (name, count)) in
+                    chronica_engine::animals::population_by_species(&self.sim)
+                        .iter()
+                        .enumerate()
+                {
+                    if *count > 0 {
+                        if tame_counts[i] > 0 {
+                            ui.label(format!(
+                                "{name}: {count}  ({} tame)",
+                                tame_counts[i]
+                            ));
+                        } else {
+                            ui.label(format!("{name}: {count}"));
+                        }
+                    }
+                }
+                let extinct: Vec<&str> =
+                    chronica_engine::animals::population_by_species(&self.sim)
+                        .iter()
+                        .filter(|(_, c)| *c == 0)
+                        .map(|(n, _)| n.as_str())
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .map(|n| Box::leak(n.to_string().into_boxed_str()) as &str)
+                        .collect();
+                if !extinct.is_empty() {
+                    ui.label(
+                        egui::RichText::new(format!("extinct: {}", extinct.join(", ")))
+                            .color(egui::Color32::from_rgb(150, 110, 110)),
+                    );
+                }
+                let (live_plants, trees, cover) =
+                    chronica_engine::vegetation::forest_stats(&self.sim);
+                ui.label(format!(
+                    "Plants: {live_plants}  ({trees} grown trees, {:.0}% forest)",
+                    cover * 100.0
+                ));
+                let corpses = self
+                    .sim
+                    .animals
+                    .corpses
+                    .iter()
+                    .filter(|c| !c.gone)
+                    .count();
+                if corpses > 0 {
+                    ui.label(format!("Carcasses on the ground: {corpses}"));
+                }
+                ui.separator();
                 ui.heading("Settlements");
                 for (name, (x, y)) in chronica_engine::society::living_settlements(&self.sim) {
                     ui.label(format!("{name} at ({x},{y})"));
                 }
                 ui.heading("Beliefs");
-                for (name, cnt) in chronica_engine::society::belief_clusters(&self.sim) {
-                    ui.label(format!("{name}: {cnt} faithful"));
+                let clusters = chronica_engine::society::belief_clusters(&self.sim);
+                let mut forgotten = 0;
+                for (name, cnt) in &clusters {
+                    if *cnt > 0 {
+                        ui.label(format!("{name}: {cnt} faithful"));
+                    } else {
+                        forgotten += 1;
+                    }
+                }
+                if forgotten > 0 {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "…and {forgotten} faiths whose last believer is gone"
+                        ))
+                        .color(egui::Color32::from_rgb(140, 130, 150)),
+                    );
                 }
                 if !self.why_lines.is_empty() {
                     ui.separator();
@@ -498,21 +578,32 @@ impl eframe::App for App {
             }
 
             // ---------- buildings ----------
-            for b in self.sim.objects.buildings.iter().filter(|b| b.exists) {
+            for b in self.sim.objects.buildings.iter() {
+                if !b.exists && b.progress < 1.0 {
+                    continue; // never finished, never a ruin
+                }
                 let (x, y) = self.sim.grid.xy(b.cell as usize);
                 if !visible(x, y) {
                     continue;
                 }
                 let p = to_screen(x as f32 + 0.5, y as f32 + 0.5);
                 if ascii {
+                    let (glyph, col) = if !b.exists {
+                        // per the key: ruins are grey and crumble
+                        ("□", egui::Color32::from_rgb(130, 130, 130))
+                    } else if b.progress < 1.0 {
+                        ("□", egui::Color32::from_rgb(200, 170, 110))
+                    } else {
+                        ("⌂", egui::Color32::from_rgb(210, 160, 90))
+                    };
                     painter.text(
                         p,
                         egui::Align2::CENTER_CENTER,
-                        "⌂",
+                        glyph,
                         egui::FontId::monospace(self.zoom * 0.95),
-                        egui::Color32::from_rgb(210, 160, 90),
+                        col,
                     );
-                } else {
+                } else if b.exists {
                     painter.rect_filled(
                         egui::Rect::from_center_size(p, egui::vec2(self.zoom * 0.85, self.zoom * 0.85)),
                         2.0,
