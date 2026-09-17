@@ -46,10 +46,16 @@ fn main() {
     for i in 0..w * h {
         px[i] = if g.ocean[i] {
             (16, 32, 64)
+        } else if g.ice_bears(i) {
+            (185, 210, 235)
         } else if g.is_river(i) || g.is_lake(i) {
             (52, 96, 168)
         } else if g.burning[i] > 0 {
             (235, 96, 32)
+        } else if g.crop_cover.get(i).copied().unwrap_or(0.0) > 0.15 {
+            (212, 178, 70)
+        } else if g.is_path(i) {
+            (150, 128, 96)
         } else if g.snow[i] > 0.02 {
             (222, 226, 234)
         } else if g.burn_scar[i] > 0.3 {

@@ -48,6 +48,14 @@ density field.*
 
 ![Seed 7, year 6](screenshots_rust/s7y6_map.png)
 
+### The human mark
+
+*Seed 1 at year 4: golden wheat fields by the water, tan roads walked into existence by ten
+thousand footsteps, huts and storehouses (brown) — every one of them founded, built, and worn by
+a specific person on a specific day, queryable to the unit.*
+
+![Civilization visible, seed 1 year 4](screenshots_rust/y4civ_map.png)
+
 ---
 
 ## History is derived, not written
@@ -91,12 +99,15 @@ Year 3: a hare died of hunger
 
 | Layer | The truth underneath |
 |---|---|
-| **Water** | Rain fields → surface flow by hydraulic head (3 sub-steps/day) → infiltration → groundwater with downslope drainage → springs, evaporation, erosion. Rivers/lakes are *observations* (`is_river`/`is_lake`), never placed. |
-| **Plants** | Each an entity: own RNG stream, lifespan drawn at germination, growth from its cell's real water/light/nutrients, transpiration back into the aquifer, light competition, seeding real neighbor cells, winter dormancy, death always with a cause event. |
-| **Animals** | Each an individual: needs, condition, inherited genes, generation count, perception via spatial index only, one shared utility brain with **recorded rationale**, pursuit predation (dice only resolve a struggle that really closed distance), courtship, gestation with recorded sire, corpses that rot and feed the soil. |
-| **People** | Everything above plus: nutrition, personality, uncapped decaying memories, typed relationships formed only by real encounters, marriage → conception only when spouses are actually together, grief through real kin bonds, gathering/hunting/woodcutting/building/storing/sharing/farming that consume real world state, and techniques held in individual heads — taught along bonds, extinct if the last knower dies untaught. |
-| **Society** | Settlements *recognized* from real building clusters; beliefs originating in real memories and spreading in real conversations; raids from cited hunger or kin-death grievances — some seeds stay entirely peaceful. |
-| **History** | Append-only causal event graph, never capped, never pruned; consequences are a derived reverse index; text generated on demand. |
+| **Water & weather** | Rain fields → surface flow by hydraulic head → groundwater with downslope drainage → springs, evaporation, erosion. Rivers/lakes are *observations*, never placed. Ice grows on still winter water and bears weight (roads that exist only in the cold); wind carries fire downwind; floods expel waders and claim dwellings. |
+| **Plants** | Each an entity with **heritable genes** (yield, hardiness): growth from its cell's real water/light/nutrients, transpiration back into the aquifer, light competition, seeding real neighbors, winter dormancy, death always with a cause. Farmers keep seed from the finest heads — **domestication emerges from that choice**, compounding over generations. |
+| **Animals** | Each an individual: needs, condition, inherited genes, perception via spatial index only, one shared utility brain with **recorded rationale**, pursuit predation, courtship, gestation with recorded sire. **Trout live in the rivers** (following the falling water in dry season, sifting a real detritus column, boom-crashing like any population). Animals remember good ground and attack sites; starving bold predators stalk *people*, and witnesses carry the memory. Feeding a wild sheep day after day tames it; the herd is the winter larder. |
+| **Sickness** | Pathogens live in bodies: sparking only in real crowds on real wet ground, crossing only on real contacts (a conversation, a shared roof, butchering a kill, tending a beast), running a course against each host's health, killing with the case as cause, leaving immunity behind. |
+| **People — body** | Nutrition, exposure (winter without walls and a fed hearth kills), fatigue; food **rots** by real temperature and is saved by real smoke over real fires; carrying has limits; houses are raised over days of shared or private labor, weather into ruins, and shelter against beasts (a barred door more than doubles the defense). |
+| **People — mind** | Uncapped decaying memories; a **working map of the land** (food, water, danger) learned by living and traded in conversation — secondhand knowledge ages and misleads; **seasonal hunger schemas** that drive gathering and smoking *before* the lean months return; the past **retold and distorted by the listener** (fear amplifies, warmth softens) so a killer beast becomes a clan's sworn enemy in heads that never saw it — and kin hunt that specific animal by identity. |
+| **People — each other** | Typed relationships only from real encounters; marriage → conception only when spouses are together; grief through real kin bonds; **shared meals bind, stolen ones burn** (witnesses carry the thief's name into the grievances that feed raids); the mother-line is recognized and marriage looks outward, weaving bands together; techniques live in heads, taught along bonds, extinct with the last untaught knower. |
+| **Villages** | One capacity — *put your day's work into any project you benefit from* — and hamlets raise **common storehouses** (founded from surplus where homes cluster) and **palisade rings** (founded segment by segment by whoever carries the memories of violence — fear is the architect). Footsteps wear vegetation into desire lines that become **roads**; grass reclaims the unwalked. Settlements are *recognized* from real clusters; beliefs originate in real memories and spread in real conversations. |
+| **History** | Append-only causal event graph, never capped, never pruned; consequences a derived reverse index; all text generated on demand; every "why?" walks to physical or social state. |
 
 ## Guarantees (tested, not aspirational)
 
@@ -168,6 +179,22 @@ obituaries:
 - **Sana.** Felled two oaks, raised a dwelling, laid up food, befriended Mirvertal, founded a
   religion from her own grief — and died of hunger in Year 2. Her faith died with zero faithful;
   a rival's, *The Way of Belverbel*, got six. Her whole biography above is queried, not written.
+- **The world where one fish was born.** The first trout release seeded fish "wherever the water
+  was deep enough" — at a moment when, 240 simulated days into a young world's rain, almost
+  nowhere was. Census: one trout. It starved alone in year one, the only fish that ever lived
+  there. (The fix wasn't more fish; it was letting the world finish hydrating first.)
+- **Stranded silver.** The second trout release died differently: dry-season rivers shrank and
+  whole shoals died gasping in the shallows — until fish learned what real fish know: follow the
+  falling water to the deep pools.
+- **Frozen in sight of the frame.** Winter exposure landed with staged construction: people who
+  didn't finish their walls before the frost died beside the half-raised □ of their own house —
+  with a causal chain reading *temperature −14°, shelter: none*.
+- **The murrain in the fold.** Taming brought herds to the camps; herds brought crowding; and the
+  first zoonotic sickness crossed at the exact moment of care — feeding, tending, butchering.
+  Domestication and epidemic arrived as a package, uninstructed, exactly as they did for us.
+- **The clan's sworn enemy.** A bear killed a woman; her kin took up vengeance against that bear,
+  by identity — and the retelling spread the enmity to people who had never seen it, their fear
+  inflating its weight with each telling. The first legend was a grudge.
 
 None of these were scripted, none were patched by cheating — every fix was physical (drainage,
 dormancy, transpiration budgets, predator ratios, memory invalidation, provisioning). That's the
@@ -176,15 +203,18 @@ exactly why.**
 
 ## Honest state of the world
 
-The engine is complete through all eight stages, but two things are open (tracked in the
-[stage reports](docs/STAGE_REPORTS.md), see Stage 4):
+The engine is complete through all eight stages plus the survival-physics, biology, cognition,
+moral-economy, and village layers (see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full plan and
+[`docs/STAGE_REPORTS.md`](docs/STAGE_REPORTS.md) for the build history). Open, honestly:
 
-1. **Human lineages don't yet persist for centuries.** Founding bands live, build, marry, teach,
-   believe, and raise children — but most seeds decline within a decade (winter/spring food
-   gaps, local over-foraging). Every collapse is diagnosable from the engine's own event log,
-   which is the system working as designed. Candidate fixes are documented.
-2. **Markets, currencies, and armies-at-scale** aren't built yet; goods are honest stores and
-   conflict is band-scale feuding. Nothing pretends otherwise.
+1. **Lineage persistence is still seed-variable.** Some worlds now carry villages, herds, fields,
+   and second-generation families for decades; others fade within one. Survival sits on a real
+   knife-edge (as it did for actual foraging bands), and every collapse is diagnosable from the
+   event log. The demographic margin keeps widening with each capacity — hearths, smoking racks,
+   fish, shared granaries, learned foresight — never with a spawn or a stat.
+2. **Markets, currencies, factions, and armies-at-scale** aren't built yet: goods are honest
+   stores with real provenance pressure, and conflict is band-scale feuding. The capacities they
+   will emerge from (barter, deference, group raids) are next on the roadmap.
 
 ## Repository map
 
