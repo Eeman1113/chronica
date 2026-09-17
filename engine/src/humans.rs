@@ -90,6 +90,7 @@ pub struct HumanRationale {
     pub social: f32,
     pub farm: f32,
     pub preserve: f32,
+    pub fish: f32,
     pub chosen: u8,
 }
 
@@ -109,6 +110,7 @@ pub enum HumanAction {
     Court { with: u32 },
     TendFarm,                  // farming technique: plant/tend wheat on this cell
     PreserveFood,              // smoke/dry the fresh stores over the hearth
+    Fish { target: u32 },      // catch a trout from the water's edge
     Idle,
 }
 
@@ -414,6 +416,7 @@ pub struct HumanPercepts {
     pub tree_here: bool,
     pub fire_near: bool,
     pub granary_near: Option<(u32, f32)>, // building idx with food, its stock
+    pub fish: Option<u32>,                // a trout within reach of the bank
 }
 
 fn perceive(sim: &Sim, hi: usize) -> HumanPercepts {
@@ -430,11 +433,13 @@ fn perceive(sim: &Sim, hi: usize) -> HumanPercepts {
         tree_here: false,
         fire_near: false,
         granary_near: None,
+        fish: None,
     };
     const R: i32 = 8;
     // animals: threats and game
     let mut best_threat = i32::MAX;
     let mut best_game = i32::MAX;
+    let mut best_fish = i32::MAX;
     sim.animals.index.for_each_near(h.x, h.y, R, |ai| {
         let a = &sim.animals.list[ai as usize];
         if !a.alive {
@@ -450,7 +455,12 @@ fn perceive(sim: &Sim, hi: usize) -> HumanPercepts {
             best_threat = d;
             p.threat = Some((ai, a.x, a.y));
         }
-        if !dangerous && d < best_game {
+        if a.species == crate::species::A_FISH {
+            if d < best_fish {
+                best_fish = d;
+                p.fish = Some(ai);
+            }
+        } else if !dangerous && d < best_game {
             best_game = d;
             p.game = Some(ai);
         }
@@ -594,6 +604,13 @@ fn decide(sim: &Sim, hi: usize, p: &HumanPercepts) -> (HumanAction, HumanRationa
             * if food_avail < 1.5 { 1.0 } else { 0.3 }
             * if h.hunger > 1.0 { 1.6 } else { 1.0 };
     }
+    // fishing: the water gives food to those who learn to take it. A flooded, game-poor
+    // world pushes people to the bank — and skill grows with every catch.
+    if adult && p.fish.is_some() {
+        r.fish = h.hunger.max(0.35) * (0.45 + h.skills[SK_HUNT] * 1.0)
+            * if food_avail < 1.5 { 1.15 } else { 0.3 }
+            * if h.hunger > 1.0 { 1.5 } else { 1.0 };
+    }
     // the debt of blood: if the beast that took your kin is within sight, nothing else matters
     if let Some(beast) = h.vengeance {
         let bi = beast.index();
@@ -694,6 +711,7 @@ fn decide(sim: &Sim, hi: usize, p: &HumanPercepts) -> (HumanAction, HumanRationa
         (r.social, 6),
         (r.farm, 7),
         (r.preserve, 9),
+        (r.fish, 10),
         (r.rest, 8),
     ];
     let mut best = (0.2f32, 9u8); // idle threshold
@@ -810,6 +828,7 @@ fn decide(sim: &Sim, hi: usize, p: &HumanPercepts) -> (HumanAction, HumanRationa
         }
         7 => HumanAction::TendFarm,
         9 => HumanAction::PreserveFood,
+        10 => HumanAction::Fish { target: p.fish.unwrap() },
         8 => HumanAction::Rest,
         _ => {
             // idle: drift home or deposit surplus
@@ -965,16 +984,11 @@ fn move_toward_h(sim: &mut Sim, hi: usize, to: (i32, i32), steps: i32) {
         match sim.grid.idx(nx, ny) {
             Some(j)
                 if !sim.grid.ocean[j]
-                    && (sim.grid.surface[j] <= 0.6 || sim.grid.ice_bears(j)) =>
+                    && (sim.grid.surface[j] <= 0.12 || sim.grid.ice_bears(j)) =>
             {
-                let deep = sim.grid.surface[j] > 0.2 && !sim.grid.ice_bears(j);
                 let h = &mut sim.humans.list[hi];
                 h.x = nx;
                 h.y = ny;
-                if deep {
-                    h.fatigue = (h.fatigue + 0.15).min(1.5);
-                    break;
-                }
             }
             _ => break,
         }
@@ -1909,8 +1923,9 @@ pub fn tick(sim: &mut Sim) {
             }
         }
         for (bi, t) in cell_temps {
+            let flooded = sim.grid.surface[sim.objects.buildings[bi].cell as usize] > 0.12;
             let b = &mut sim.objects.buildings[bi];
-            let rate = if t > 15.0 {
+            let mut rate = if t > 15.0 {
                 0.012
             } else if t > 5.0 {
                 0.006
@@ -1919,8 +1934,11 @@ pub fn tick(sim: &mut Sim) {
             } else {
                 0.001
             };
+            if flooded {
+                rate = 0.25; // waterlogged grain rots and washes away
+            }
             b.food_store *= 1.0 - rate;
-            b.preserved_store *= 1.0 - rate * 0.12;
+            b.preserved_store *= 1.0 - if flooded { rate } else { rate * 0.12 };
             // the hearth burns through cold days whether or not anyone watches it
             if t < 5.0 && b.firewood > 0.0 && b.standing() {
                 b.firewood = (b.firewood - 0.25).max(0.0);
@@ -2526,6 +2544,9 @@ fn apply_action(
         HumanAction::TendFarm => {
             tend_farm(sim, hi);
         }
+        HumanAction::Fish { target } => {
+            fish_from_bank(sim, hi, target as usize);
+        }
         HumanAction::PreserveFood => {
             let Some(b) = sim.humans.list[hi].home.some() else { return };
             let bi = b.index();
@@ -3064,6 +3085,70 @@ pub fn zoonotic_exposure(sim: &mut Sim, hi: usize, ai: usize) {
             vec![],
         );
         sim.humans.list[hi].infections.push((pg, day, ev));
+    }
+}
+
+/// Fishing: a person cannot enter deep water, so they work the bank — stepping to a dry cell
+/// beside the trout, then catching it. Skill (shared with hunting) grows the odds and the yield.
+fn fish_from_bank(sim: &mut Sim, hi: usize, ai: usize) {
+    if ai >= sim.animals.list.len() || !sim.animals.list[ai].alive {
+        return;
+    }
+    let (fx, fy) = {
+        let a = &sim.animals.list[ai];
+        (a.x, a.y)
+    };
+    let (hx, hy) = {
+        let h = &sim.humans.list[hi];
+        (h.x, h.y)
+    };
+    // already on the bank beside the fish?
+    if (fx - hx).abs().max((fy - hy).abs()) > 1 {
+        // find a dry cell adjacent to the fish and walk to it (people fish from land)
+        let mut bank: Option<(i32, i32)> = None;
+        for dy in -1i32..=1 {
+            for dx in -1i32..=1 {
+                if let Some(j) = sim.grid.idx(fx + dx, fy + dy) {
+                    if !sim.grid.ocean[j] && sim.grid.surface[j] <= 0.12 {
+                        bank = Some((fx + dx, fy + dy));
+                    }
+                }
+            }
+        }
+        let to = bank.unwrap_or((fx, fy));
+        move_toward_h(sim, hi, to, 2);
+        return;
+    }
+    // a cast: outcome from skill; a caught trout is real food, and the skill is learned
+    let day = sim.clock.day;
+    let (p_catch, meat) = {
+        let h = &sim.humans.list[hi];
+        let sk = h.skills[SK_HUNT];
+        ((0.30 + sk * 0.5).clamp(0.15, 0.85), 0.55)
+    };
+    let caught = {
+        let h = &mut sim.humans.list[hi];
+        h.skills[SK_HUNT] = (h.skills[SK_HUNT] + 0.004).min(1.0);
+        h.rng.chance(p_catch)
+    };
+    if caught {
+        let cell = sim.grid.idx(fx, fy).map(|i| i as u32);
+        let kill_ev = sim.history.push(
+            day,
+            EntityRef::Animal(crate::animals::Animals::id_of(ai)),
+            EventKind::Killed { by: EntityRef::Person(Humans::id_of(hi)) },
+            cell,
+            vec![Cause::State(StateRef { what: StateKind::Hunger, value: sim.humans.list[hi].hunger })],
+        );
+        crate::animals::kill_animal(sim, ai, DeathCause::Predation, vec![Cause::Event(kill_ev)], false);
+        let h = &mut sim.humans.list[hi];
+        h.carried_food = (h.carried_food + meat).min(7.0);
+        if h.hunger > 0.5 {
+            let bite = h.carried_food.min(h.hunger * 0.7);
+            h.carried_food -= bite;
+            h.hunger = (h.hunger - bite).max(0.0);
+        }
+        crate::humans::remember_spot(h, 0, fx, fy, day); // a good fishing spot is remembered
     }
 }
 

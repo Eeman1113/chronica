@@ -597,7 +597,7 @@ pub fn tick(sim: &mut Sim) {
                 (a.x, a.y)
             };
             if let Some(here) = sim.grid.idx(x, y) {
-                if sim.grid.ocean[here] || sim.grid.surface[here] > 0.5 {
+                if sim.grid.ocean[here] || sim.grid.surface[here] > 0.12 {
                     let mut best: Option<((i32, i32), f32)> = None;
                     for r in 1..=4i32 {
                         for dy in -r..=r {
@@ -608,7 +608,7 @@ pub fn tick(sim: &mut Sim) {
                                 if let Some(j) = sim.grid.idx(x + dx, y + dy) {
                                     if !sim.grid.ocean[j] {
                                         let d = sim.grid.surface[j];
-                                        if d < 0.25
+                                        if d <= 0.12
                                             && best.map(|(_, bd)| d < bd).unwrap_or(true)
                                         {
                                             best = Some(((x + dx, y + dy), d));
@@ -881,7 +881,7 @@ fn too_deep(sim: &Sim, j: usize) -> bool {
     if sim.grid.ice_bears(j) {
         return false; // winter roads
     }
-    sim.grid.ocean[j] || sim.grid.surface[j] > 0.5
+    sim.grid.ocean[j] || sim.grid.surface[j] > 0.12
 }
 
 /// Step toward a destination, stopping ON it.

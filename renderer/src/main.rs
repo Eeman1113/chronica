@@ -802,6 +802,7 @@ impl eframe::App for App {
                         chronica_engine::humans::HumanAction::Court { .. } => "courting",
                         chronica_engine::humans::HumanAction::TendFarm => "farming",
                         chronica_engine::humans::HumanAction::PreserveFood => "smoking food",
+                        chronica_engine::humans::HumanAction::Fish { .. } => "fishing",
                         chronica_engine::humans::HumanAction::Rest => "resting",
                         chronica_engine::humans::HumanAction::Flee { .. } => "fleeing!",
                         chronica_engine::humans::HumanAction::MoveTo { .. } => "walking",
