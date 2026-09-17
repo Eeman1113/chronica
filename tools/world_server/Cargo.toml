@@ -1,0 +1,9 @@
+[package]
+name = "world_server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+chronica-engine = { path = "../../engine" }
+tiny_http = "0.12"
+png = "0.17"
