@@ -407,6 +407,19 @@ fn main() {
             {
                 let _ = f.write_all(line.as_bytes());
             }
+            // keep every world's portrait, final page, and registry line forever; but the
+            // heavy full-save .crn we retain only for the most recent worlds (disk is finite)
+            if let Ok(rd) = std::fs::read_dir(&archive_dir) {
+                let mut crns: Vec<(std::time::SystemTime, std::path::PathBuf)> = rd
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().map(|x| x == "crn").unwrap_or(false))
+                    .filter_map(|e| e.metadata().ok().and_then(|m| m.modified().ok()).map(|t| (t, e.path())))
+                    .collect();
+                crns.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+                for (_, path) in crns.into_iter().skip(60) {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
             let _ = std::fs::remove_file(&save_path);
             epoch += 1;
             let s = seed_for_epoch(genesis, epoch);
