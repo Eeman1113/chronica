@@ -27,7 +27,15 @@ impl Default for ClimateParams {
     }
 }
 
-/// Advance climate one day: write `temp`, `rain`, update `snow` (accumulate/melt).
+/// Today's prevailing wind as a unit-ish vector — a pure deterministic function of day+seed,
+/// shared by fire spread (downwind runs) and anything else that cares.
+pub fn wind_today(seed: u64, day: u64) -> (f32, f32) {
+    let n = Noise::new(crate::core::rng::splitmix64(seed ^ 0x77AA_D001));
+    let a = n.at2(day as f32 / 17.0, 0.0) * std::f32::consts::TAU * 2.0;
+    (a.cos(), a.sin())
+}
+
+/// Advance climate one day: write `temp`, `rain`, update `snow` (accumulate/melt), freeze/melt ice.
 pub fn tick(sim: &mut Sim) {
     let p = ClimateParams::default();
     let day = sim.clock.day;
@@ -62,6 +70,14 @@ pub fn tick(sim: &mut Sim) {
             if sim.grid.ocean[i] {
                 sim.grid.rain[i] = 0.0;
                 continue;
+            }
+            // ice: standing water freezes through sustained cold, thaws in warmth
+            if !sim.grid.ocean[i] {
+                if temp < -1.0 && sim.grid.surface[i] > 0.02 {
+                    sim.grid.ice[i] = (sim.grid.ice[i] + 0.015).min(0.5);
+                } else if temp > 1.0 && sim.grid.ice[i] > 0.0 {
+                    sim.grid.ice[i] = (sim.grid.ice[i] - 0.03).max(0.0);
+                }
             }
             if temp <= 0.0 {
                 // snowfall accumulates as pack; no liquid rain

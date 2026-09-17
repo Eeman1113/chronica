@@ -86,6 +86,7 @@ pub struct HumanRationale {
     pub build: f32,
     pub social: f32,
     pub farm: f32,
+    pub preserve: f32,
     pub chosen: u8,
 }
 
@@ -104,6 +105,7 @@ pub enum HumanAction {
     Socialize { with: u32 },   // talk: bonds, news, beliefs, teaching
     Court { with: u32 },
     TendFarm,                  // farming technique: plant/tend wheat on this cell
+    PreserveFood,              // smoke/dry the fresh stores over the hearth
     Idle,
 }
 
@@ -141,6 +143,7 @@ pub struct Human {
     pub due_day: u64,
     // economy
     pub carried_food: f32,
+    pub seed_genes: Option<[f32; 2]>, // the strain you saved seed from — selection in action
     pub carried_water: f32, // waterskin: carrying is the oldest human technology
     pub carried_wood: f32,
     pub home: BuildingId,
@@ -150,6 +153,8 @@ pub struct Human {
     pub camp: (i32, i32), // band/home anchor: where this person considers "ours"
     pub area_yield: f32,  // rolling memory of what this ground has been giving
     pub water_memory: Option<(i32, i32)>,
+    pub infections: Vec<(u8, u64, crate::core::ids::EventId)>, // pathogen, day caught, case event
+    pub immune: Vec<u8>,
     pub days_starving: u16,
     pub days_thirsty: u16,
     pub rng: Rng,
@@ -240,6 +245,7 @@ impl Humans {
             pregnant_by: PersonId::NONE,
             due_day: 0,
             carried_food: 0.5,
+            seed_genes: None,
             carried_water: 4.0,
             carried_wood: 0.0,
             home: BuildingId::NONE,
@@ -248,6 +254,8 @@ impl Humans {
             camp: (x, y),
             area_yield: 1.0,
             water_memory: None,
+            infections: Vec::new(),
+            immune: Vec::new(),
             days_starving: 0,
             days_thirsty: 0,
             rng,
@@ -596,6 +604,18 @@ fn decide(sim: &Sim, hi: usize, p: &HumanPercepts) -> (HumanAction, HumanRationa
             r.social *= 0.3; // an empty stomach ends the conversation
         }
     }
+    // the smell of frost: fresh stores spoil, smoked ones keep — autumn is for the racks
+    if adult {
+        if let Some(b) = h.home.some() {
+            let bl = &sim.objects.buildings[b.index()];
+            if bl.standing() && bl.food_store > 1.5 && bl.firewood > 0.5 {
+                let season = day % 360 / 90;
+                r.preserve = 0.4
+                    + bl.food_store * 0.08
+                    + if season == 2 { 0.6 } else { 0.0 };
+            }
+        }
+    }
     r.rest = h.fatigue * 1.3;
 
     let table = [
@@ -607,6 +627,7 @@ fn decide(sim: &Sim, hi: usize, p: &HumanPercepts) -> (HumanAction, HumanRationa
         (r.build, 5),
         (r.social, 6),
         (r.farm, 7),
+        (r.preserve, 9),
         (r.rest, 8),
     ];
     let mut best = (0.2f32, 9u8); // idle threshold
@@ -690,6 +711,7 @@ fn decide(sim: &Sim, hi: usize, p: &HumanPercepts) -> (HumanAction, HumanRationa
             }
         }
         7 => HumanAction::TendFarm,
+        9 => HumanAction::PreserveFood,
         8 => HumanAction::Rest,
         _ => {
             // idle: drift home or deposit surplus
@@ -724,8 +746,11 @@ fn move_human(sim: &mut Sim, hi: usize, dir: (i32, i32), steps: i32) {
             (h.x + dir.0, h.y + dir.1)
         };
         match sim.grid.idx(nx, ny) {
-            Some(j) if !sim.grid.ocean[j] && sim.grid.surface[j] <= 0.6 => {
-                let deep = sim.grid.surface[j] > 0.2;
+            Some(j)
+                if !sim.grid.ocean[j]
+                    && (sim.grid.surface[j] <= 0.6 || sim.grid.ice_bears(j)) =>
+            {
+                let deep = sim.grid.surface[j] > 0.2 && !sim.grid.ice_bears(j);
                 let h = &mut sim.humans.list[hi];
                 h.x = nx;
                 h.y = ny;
@@ -769,8 +794,11 @@ fn move_toward_h(sim: &mut Sim, hi: usize, to: (i32, i32), steps: i32) {
             (h.x + dir.0, h.y + dir.1)
         };
         match sim.grid.idx(nx, ny) {
-            Some(j) if !sim.grid.ocean[j] && sim.grid.surface[j] <= 0.6 => {
-                let deep = sim.grid.surface[j] > 0.2;
+            Some(j)
+                if !sim.grid.ocean[j]
+                    && (sim.grid.surface[j] <= 0.6 || sim.grid.ice_bears(j)) =>
+            {
+                let deep = sim.grid.surface[j] > 0.2 && !sim.grid.ice_bears(j);
                 let h = &mut sim.humans.list[hi];
                 h.x = nx;
                 h.y = ny;
@@ -981,6 +1009,10 @@ pub fn tick(sim: &mut Sim) {
             let a = &mut sim.animals.list[ai];
             a.hunger = (a.hunger - 0.4).max(0.0);
             a.tame_prog += 0.6 + warmth * 0.6;
+            let _ = &a;
+            zoonotic_exposure(sim, hi, ai);
+            let a = &mut sim.animals.list[ai];
+            let _ = a;
             if a.tame_prog >= 6.0 {
                 a.tamed_by = owner_id;
                 let aid = crate::animals::Animals::id_of(ai);
@@ -1060,6 +1092,38 @@ pub fn tick(sim: &mut Sim) {
             } else {
                 h.days_thirsty = 0;
             }
+            // sickness runs its course in the body it inhabits
+            let mut recovered: Vec<u8> = Vec::new();
+            let mut fatal: Option<(u8, crate::core::ids::EventId)> = None;
+            for k in 0..h.infections.len() {
+                let (pg, since, case_ev) = h.infections[k];
+                let p = &crate::pathogens::PATHOGENS[pg as usize];
+                let t = day.saturating_sub(since);
+                if t < p.incubation_d {
+                    continue;
+                }
+                if t > p.incubation_d + p.illness_d {
+                    recovered.push(pg);
+                    continue;
+                }
+                h.fatigue = (h.fatigue + 0.25).min(1.5);
+                h.hunger = (h.hunger + 0.03).min(2.0);
+                let risk = p.daily_lethality * (1.6 - h.health).max(0.2);
+                if h.rng.chance(risk) {
+                    fatal = Some((pg, case_ev));
+                }
+            }
+            if let Some((_pg, case_ev)) = fatal {
+                h.health = 0.0;
+                let _ = case_ev;
+            }
+            for pg in &recovered {
+                h.infections.retain(|(g, _, _)| g != pg);
+                if !h.immune.contains(pg) {
+                    h.immune.push(*pg);
+                }
+            }
+            let _ = &recovered;
             // winter nights: walls are the difference between cold and dying of it
             let t_here = sim
                 .grid
@@ -1067,15 +1131,27 @@ pub fn tick(sim: &mut Sim) {
                 .map(|i| sim.grid.temp[i])
                 .unwrap_or(0.0);
             if t_here < -4.0 {
-                let sheltered = sim.objects.buildings.iter().any(|b| {
-                    b.standing() && {
+                let mut shelter = 0u8; // 0 open sky, 1 cold walls, 2 hearth-warmed
+                for b in sim.objects.buildings.iter() {
+                    if b.standing() {
                         let (bx, by) = sim.grid.xy(b.cell as usize);
-                        (bx - h.x).abs().max((by - h.y).abs()) <= 1
+                        if (bx - h.x).abs().max((by - h.y).abs()) <= 1 {
+                            shelter = if b.firewood > 0.0 { 2 } else { shelter.max(1) };
+                            if shelter == 2 {
+                                break;
+                            }
+                        }
                     }
-                });
-                if !sheltered {
-                    h.health -= 0.012 * (-t_here / 10.0).min(2.0);
-                    h.fatigue = (h.fatigue + 0.1).min(1.5);
+                }
+                match shelter {
+                    2 => {}
+                    1 => {
+                        h.health -= 0.006 * (-t_here / 10.0).min(2.0);
+                    }
+                    _ => {
+                        h.health -= 0.012 * (-t_here / 10.0).min(2.0);
+                        h.fatigue = (h.fatigue + 0.1).min(1.5);
+                    }
                 }
             }
             h.health = (h.health
@@ -1094,16 +1170,28 @@ pub fn tick(sim: &mut Sim) {
             continue;
         }
         if sim.humans.list[hi].health <= 0.0 {
-            let t = sim
-                .grid
-                .idx(sim.humans.list[hi].x, sim.humans.list[hi].y)
-                .map(|i| sim.grid.temp[i])
-                .unwrap_or(0.0);
-            deaths.push((
-                hi,
-                DeathCause::Exposure,
-                vec![Cause::State(StateRef { what: StateKind::Temperature, value: t })],
-            ));
+            let sick_case = sim.humans.list[hi]
+                .infections
+                .iter()
+                .find(|(pg, since, _)| {
+                    day.saturating_sub(*since)
+                        >= crate::pathogens::PATHOGENS[*pg as usize].incubation_d
+                })
+                .map(|(_, _, ev)| *ev);
+            if let Some(case_ev) = sick_case {
+                deaths.push((hi, DeathCause::Disease, vec![Cause::Event(case_ev)]));
+            } else {
+                let t = sim
+                    .grid
+                    .idx(sim.humans.list[hi].x, sim.humans.list[hi].y)
+                    .map(|i| sim.grid.temp[i])
+                    .unwrap_or(0.0);
+                deaths.push((
+                    hi,
+                    DeathCause::Exposure,
+                    vec![Cause::State(StateRef { what: StateKind::Temperature, value: t })],
+                ));
+            }
             continue;
         }
         if starved {
@@ -1325,13 +1413,57 @@ pub fn tick(sim: &mut Sim) {
             let bl = &sim.objects.buildings[bi];
             bl.exists && bl.progress >= 1.0 && bl.condition < 0.8
         };
-        if needs && wood >= 1.0 {
-            let (bx, by) = sim.grid.xy(sim.objects.buildings[bi].cell as usize);
-            if (bx - pos.0).abs().max((by - pos.1).abs()) <= 1 {
+        let (bx, by) = sim.grid.xy(sim.objects.buildings[bi].cell as usize);
+        let at_home = (bx - pos.0).abs().max((by - pos.1).abs()) <= 1;
+        if at_home && wood >= 1.0 {
+            if needs {
                 sim.humans.list[hi].carried_wood -= 1.0;
                 let bl = &mut sim.objects.buildings[bi];
                 bl.condition = (bl.condition + 0.25).min(1.0);
                 bl.wood_used += 1.0;
+            } else {
+                // the woodpile: warmth for the cold months
+                let bl = &mut sim.objects.buildings[bi];
+                if bl.firewood < 12.0 {
+                    let put = (wood - 0.5).min(3.0).max(0.0);
+                    sim.humans.list[hi].carried_wood -= put;
+                    bl.firewood += put;
+                }
+            }
+        }
+    }
+
+    // ---------- rot: fresh food spoils by real temperature; smoke slows it; hearths burn ----------
+    {
+        let mut cell_temps: Vec<(usize, f32)> = Vec::new();
+        for (bi, b) in sim.objects.buildings.iter().enumerate() {
+            if b.exists && (b.food_store > 0.0 || b.preserved_store > 0.0 || b.firewood > 0.0) {
+                cell_temps.push((bi, sim.grid.temp[b.cell as usize]));
+            }
+        }
+        for (bi, t) in cell_temps {
+            let b = &mut sim.objects.buildings[bi];
+            let rate = if t > 15.0 {
+                0.012
+            } else if t > 5.0 {
+                0.006
+            } else if t > 0.0 {
+                0.003
+            } else {
+                0.001
+            };
+            b.food_store *= 1.0 - rate;
+            b.preserved_store *= 1.0 - rate * 0.12;
+            // the hearth burns through cold days whether or not anyone watches it
+            if t < 5.0 && b.firewood > 0.0 && b.standing() {
+                b.firewood = (b.firewood - 0.25).max(0.0);
+            }
+        }
+        for h in sim.humans.list.iter_mut() {
+            if h.alive && h.carried_food > 0.0 {
+                let t = 10.0; // what you carry rides against your body
+                let _ = t;
+                h.carried_food *= 1.0 - 0.008;
             }
         }
     }
@@ -1458,6 +1590,11 @@ fn apply_action(
                     let take = bld.food_store.min(need - ate);
                     bld.food_store -= take;
                     ate += take;
+                    if ate < need {
+                        let take2 = bld.preserved_store.min(need - ate);
+                        bld.preserved_store -= take2;
+                        ate += take2;
+                    }
                 }
             }
             if ate < need * 0.5 {
@@ -1553,7 +1690,7 @@ fn apply_action(
                 }
             }
             let h = &mut sim.humans.list[hi];
-            h.carried_food += got;
+            h.carried_food = (h.carried_food + got).min(7.0); // a basket holds what it holds
             h.area_yield = h.area_yield * 0.92 + got * 0.08; // the land remembers being picked
             h.skills[SK_FORAGE] = (h.skills[SK_FORAGE] + 0.002).min(1.0);
             h.fatigue = (h.fatigue + 0.15).min(1.5);
@@ -1634,7 +1771,7 @@ fn apply_action(
                     vec![Cause::Event(fell_ev)],
                 );
                 let h = &mut sim.humans.list[hi];
-                h.carried_wood += biomass.min(6.0);
+                h.carried_wood = (h.carried_wood + biomass.min(6.0)).min(12.0);
                 h.skills[SK_WOODCUT] = (h.skills[SK_WOODCUT] + 0.003).min(1.0);
                 h.fatigue = (h.fatigue + 0.3).min(1.5);
             }
@@ -1749,6 +1886,8 @@ fn apply_action(
                 progress: 0.15,
                 condition: 1.0,
                 food_store: 0.0,
+                preserved_store: 0.0,
+                firewood: 0.0,
                 burned: false,
                 exists: true,
             });
@@ -1813,6 +1952,30 @@ fn apply_action(
         }
         HumanAction::TendFarm => {
             tend_farm(sim, hi);
+        }
+        HumanAction::PreserveFood => {
+            let Some(b) = sim.humans.list[hi].home.some() else { return };
+            let bi = b.index();
+            let (bx, by) = sim.grid.xy(sim.objects.buildings[bi].cell as usize);
+            let at_home = {
+                let h = &sim.humans.list[hi];
+                (h.x - bx).abs().max((h.y - by).abs()) <= 1
+            };
+            if !at_home {
+                move_toward_h(sim, hi, (bx, by), 2);
+                return;
+            }
+            let bl = &mut sim.objects.buildings[bi];
+            if bl.firewood < 0.3 || bl.food_store <= 0.0 {
+                return;
+            }
+            let batch = bl.food_store.min(2.5);
+            bl.food_store -= batch;
+            bl.preserved_store += batch * 0.85; // the smoke takes its tithe
+            bl.firewood -= 0.3;
+            let h = &mut sim.humans.list[hi];
+            h.fatigue = (h.fatigue + 0.2).min(1.5);
+            h.skills[SK_CRAFT] = (h.skills[SK_CRAFT] + 0.003).min(1.0);
         }
         HumanAction::Rest => {
             let h = &mut sim.humans.list[hi];
@@ -1944,6 +2107,9 @@ fn socialize(sim: &mut Sim, hi: usize, oi: usize) {
     // beliefs travel inside real conversations
     crate::society::share_belief(sim, hi, oi);
     crate::society::share_belief(sim, oi, hi);
+    // and so, invisibly, does sickness
+    transmit_between(sim, hi, oi);
+    transmit_between(sim, oi, hi);
     // teaching: a technique passes along a real bond from one head to another
     let bond = sim.humans.rel_strength(hi, Humans::id_of(oi));
     if bond > 0.4 {
@@ -2080,6 +2246,7 @@ fn tend_farm(sim: &mut Sim, hi: usize) {
     // 1) harvest any ripe wheat standing on the plot ring — straight into hand, then granary
     let mut harvested = 0.0f32;
     let mut kills: Vec<usize> = Vec::new();
+    let mut best_seed: Option<(f32, [f32; 2])> = None;
     for dy in -2i32..=2 {
         for dx in -2i32..=2 {
             let Some(cell) = sim.grid.idx(hx + dx, hy + dy) else { continue };
@@ -2088,10 +2255,17 @@ fn tend_farm(sim: &mut Sim, hi: usize) {
                 let pl = &sim.plants.list[pi as usize];
                 if pl.alive && pl.species == crate::species::SP_WHEAT && pl.biomass > 0.30 {
                     harvested += pl.biomass * PLANTS[pl.species as usize].edible;
+                    if best_seed.map(|(b, _)| pl.biomass > b).unwrap_or(true) {
+                        best_seed = Some((pl.biomass, pl.genes));
+                    }
                     kills.push(pi as usize);
                 }
             }
         }
+    }
+    if let Some((_, g)) = best_seed {
+        // the farmer keeps seed from the finest heads — that choice IS domestication
+        sim.humans.list[hi].seed_genes = Some(g);
     }
     for pi in kills {
         crate::vegetation::kill_plant(sim, pi, DeathCause::Felled, vec![]);
@@ -2152,13 +2326,102 @@ fn tend_farm(sim: &mut Sim, hi: usize) {
             }
         }
         if let Some((cell, _)) = best {
+            let sow_genes = sim.humans.list[hi].seed_genes;
             for _ in 0..4 {
-                sim.plants.spawn(sim.cfg.seed, crate::species::SP_WHEAT, cell as u32, day as i64, 0.06);
+                sim.plants.spawn_with_genes(
+                    sim.cfg.seed,
+                    crate::species::SP_WHEAT,
+                    cell as u32,
+                    day as i64,
+                    0.06,
+                    sow_genes,
+                );
             }
             let h = &mut sim.humans.list[hi];
             h.skills[SK_FARM] = (h.skills[SK_FARM] + 0.002).min(1.0);
             h.fatigue = (h.fatigue + 0.2).min(1.5);
         }
+    }
+}
+
+/// Contagion along a real human contact: the sick one passes it on.
+pub fn transmit_between(sim: &mut Sim, from: usize, to: usize) {
+    let day = sim.clock.day;
+    let contagious: Vec<u8> = sim.humans.list[from]
+        .infections
+        .iter()
+        .filter(|(pg, since, _)| {
+            day.saturating_sub(*since)
+                >= crate::pathogens::PATHOGENS[*pg as usize].incubation_d / 2
+        })
+        .map(|(pg, _, _)| *pg)
+        .collect();
+    for pg in contagious {
+        let already = {
+            let t = &sim.humans.list[to];
+            t.immune.contains(&pg) || t.infections.iter().any(|(g, _, _)| *g == pg)
+        };
+        if already {
+            continue;
+        }
+        let p = &crate::pathogens::PATHOGENS[pg as usize];
+        let catches = {
+            let t = &mut sim.humans.list[to];
+            t.rng.chance(p.transmissibility)
+        };
+        if catches {
+            let src_case = sim.humans.list[from]
+                .infections
+                .iter()
+                .find(|(g, _, _)| *g == pg)
+                .map(|(_, _, ev)| *ev);
+            let mut causes = Vec::new();
+            if let Some(e) = src_case {
+                causes.push(Cause::Event(e));
+            }
+            let ev = sim.history.push(
+                day,
+                EntityRef::Person(Humans::id_of(to)),
+                EventKind::CaughtSickness {
+                    from: EntityRef::Person(Humans::id_of(from)),
+                    pathogen: pg,
+                },
+                None,
+                causes,
+            );
+            sim.humans.list[to].infections.push((pg, day, ev));
+        }
+    }
+}
+
+/// Zoonosis: butchering or tending an infected beast can pass its sickness to the hand.
+pub fn zoonotic_exposure(sim: &mut Sim, hi: usize, ai: usize) {
+    let Some((pg, _since)) = sim.animals.list[ai].infection else { return };
+    let already = {
+        let t = &sim.humans.list[hi];
+        t.immune.contains(&pg) || t.infections.iter().any(|(g, _, _)| *g == pg)
+    };
+    if already {
+        return;
+    }
+    let p = &crate::pathogens::PATHOGENS[pg as usize];
+    let catches = {
+        let t = &mut sim.humans.list[hi];
+        t.rng.chance(p.transmissibility * 2.0)
+    };
+    if catches {
+        let day = sim.clock.day;
+        let ev = sim.history.push(
+            day,
+            EntityRef::Person(Humans::id_of(hi)),
+            EventKind::CaughtSickness {
+                from: EntityRef::Animal(crate::animals::Animals::id_of(ai)),
+                pathogen: pg,
+            },
+            None,
+            vec![],
+        );
+        sim.humans.list[hi].infections.push((pg, day, ev));
     }
 }
 

@@ -63,6 +63,7 @@ pub struct AnimalMindInput {
     pub genes: [f32; 4], // wariness, appetite, boldness, herd-instinct
     pub is_carnivore: bool,
     pub is_herbivore: bool,
+    pub is_aquatic: bool,
     pub mature: bool,
     pub pregnant: bool,
 }
@@ -84,7 +85,11 @@ pub fn decide(inp: &AnimalMindInput, p: &Percepts, my_pos: (i32, i32)) -> (Actio
         r.drink *= 0.5; // no water perceived or remembered: urge tempered by ignorance
     }
     if inp.is_herbivore {
-        let food = p.forage_here.max(p.forage_near_val * 0.8).max(0.02);
+        let food = if inp.is_aquatic {
+            0.6 // the bed's detritus is always there to sift, unseen by forage perception
+        } else {
+            p.forage_here.max(p.forage_near_val * 0.8).max(0.02)
+        };
         r.eat = (inp.hunger.powf(1.3) * inp.genes[1] * (0.4 + food.min(1.5))).min(1.3);
     }
     if inp.is_carnivore {
@@ -143,7 +148,9 @@ pub fn decide(inp: &AnimalMindInput, p: &Percepts, my_pos: (i32, i32)) -> (Actio
         }
         1 => Action::Drink { at: p.water_near.unwrap_or(my_pos) },
         2 => {
-            if inp.is_carnivore {
+            if inp.is_aquatic {
+                Action::Graze
+            } else if inp.is_carnivore {
                 if let Some(c) = p.carrion_near {
                     Action::Scavenge { corpse: c }
                 } else {

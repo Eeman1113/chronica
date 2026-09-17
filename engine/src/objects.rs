@@ -21,7 +21,9 @@ pub struct Building {
     pub wood_used: f32,   // real logs from real felled trees
     pub progress: f32,    // 0..1 — a house is raised over days of real work
     pub condition: f32,   // decays; repaired with more wood
-    pub food_store: f32,  // food mass actually deposited
+    pub food_store: f32,  // fresh food: nutritious, and rotting by real temperature
+    pub preserved_store: f32, // smoked/dried over the hearth: keeps through winter
+    pub firewood: f32,    // the hearth's woodpile — warmth is fuel
     pub burned: bool,
     pub exists: bool,
 }

@@ -173,6 +173,15 @@ pub fn describe(sim: &Sim, ev: &Event) -> String {
         EventKind::SlaughteredAnimal { animal } => {
             format!("{s} slaughtered {}", name_of(sim, *animal))
         }
+        EventKind::CaughtSickness { from, pathogen } => format!(
+            "{s} caught the {} from {}",
+            crate::pathogens::PATHOGENS[*pathogen as usize].name,
+            name_of(sim, *from)
+        ),
+        EventKind::RecoveredFromSickness { pathogen } => format!(
+            "{s} shook off the {}",
+            crate::pathogens::PATHOGENS[*pathogen as usize].name
+        ),
         EventKind::BuildingLost { to_flood, .. } => {
             if *to_flood {
                 format!("the waters took {s}'s dwelling")

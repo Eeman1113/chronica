@@ -88,6 +88,8 @@ pub enum EventKind {
     TamedAnimal { animal: EntityRef },
     SlaughteredAnimal { animal: EntityRef },
     BuildingLost { building: EntityRef, to_flood: bool },
+    CaughtSickness { from: EntityRef, pathogen: u8 },
+    RecoveredFromSickness { pathogen: u8 },
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]

@@ -62,7 +62,7 @@ impl Sim {
         // Hydrological spin-up: run climate+water alone until rivers flow, then rewind the
         // clock. Life is seeded into a world whose water cycle is already real — no water body
         // is ever placed, we simply let the rain fall before anyone is born to see it.
-        for _ in 0..240 {
+        for _ in 0..720 {
             self.clock.day += 1;
             crate::climate::tick(self);
             crate::water::tick(self);

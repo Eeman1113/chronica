@@ -25,6 +25,7 @@ pub struct Plant {
     pub species: u8,
     pub cell: u32,
     pub born: i64, // may be negative: the initial cohort predates day 0
+    pub genes: [f32; 2], // [yield multiplier, hardiness] — heritable, mutable, selectable
     pub biomass: f32,
     pub health: f32,   // 1 healthy .. 0 dead
     pub max_age_d: u64,// drawn once at germination from own stream
@@ -50,14 +51,33 @@ impl Plants {
         PlantId::from_index(idx)
     }
     pub fn spawn(&mut self, master: u64, species: u8, cell: u32, born: i64, initial_biomass: f32) -> usize {
+        self.spawn_with_genes(master, species, cell, born, initial_biomass, None)
+    }
+    pub fn spawn_with_genes(
+        &mut self,
+        master: u64,
+        species: u8,
+        cell: u32,
+        born: i64,
+        initial_biomass: f32,
+        parent_genes: Option<[f32; 2]>,
+    ) -> usize {
         let idx = self.list.len();
         let mut rng = Rng::entity(master, "plants", idx as u64);
         let sp = &PLANTS[species as usize];
         let max_age_d = (sp.max_age_y * 360.0 * rng.range_f(0.6, 1.4)) as u64;
+        let genes = match parent_genes {
+            Some(g) => [
+                (g[0] * rng.range_f(0.96, 1.04)).clamp(0.5, 2.0),
+                (g[1] * rng.range_f(0.96, 1.04)).clamp(0.5, 2.0),
+            ],
+            None => [rng.range_f(0.85, 1.15), rng.range_f(0.85, 1.15)],
+        };
         self.list.push(Plant {
             species,
             cell,
             born,
+            genes,
             biomass: initial_biomass,
             health: 1.0,
             max_age_d,
@@ -165,7 +185,7 @@ struct PlantPlan {
     consume_n: f32,
     died: Option<DeathCause>,
     d_health: f32,
-    seeds: Vec<(u32, u8)>,
+    seeds: Vec<(u32, u8, [f32; 2])>,
     rng_after: Rng,
 }
 
@@ -190,7 +210,8 @@ pub fn tick(sim: &mut Sim) {
         let mut rng = p.rng.clone();
         let t = grid.temp[i];
         let m = grid.plant_moisture(i);
-        let su = suitability(sp, t, m);
+        let su = suitability(sp, t, m).powf(1.0 / p.genes[1]); // hardy strains shrug off margins
+        let max_b = sp.max_biomass * p.genes[0];
         // light: shade from other plants in the cell (own contribution removed)
         let own_shade = p.biomass * sp.shade_power / sp.max_biomass;
         let shade = (plants.cell_shade[i] - own_shade).max(0.0);
@@ -231,7 +252,7 @@ pub fn tick(sim: &mut Sim) {
         let grow_su = su * light * (0.5 + 0.5 * nutrients.min(1.0));
         if grow_su > 0.15 {
             let g = sp.growth * dt * grow_su * crowd * p.biomass.max(0.02)
-                * (1.0 - p.biomass / sp.max_biomass).max(0.0);
+                * (1.0 - p.biomass / max_b).max(0.0);
             plan.d_biomass = g;
             plan.transpire = 0.00015 * dt * p.biomass.min(2.0) * su;
             plan.consume_n = g * 0.01;
@@ -273,7 +294,7 @@ pub fn tick(sim: &mut Sim) {
             return Some(plan);
         }
         // seeding: mature, healthy plants put seeds into real nearby cells
-        if p.biomass >= sp.max_biomass * sp.maturity && health > 0.5 && su > 0.3 {
+        if p.biomass >= max_b * sp.maturity && health > 0.5 && su > 0.3 {
             if rng.chance(0.06 * dt / 7.0 * su) {
                 let (x, y) = ((p.cell % grid.w) as i32, (p.cell / grid.w) as i32);
                 let dx = rng.range_i(-(sp.seed_range as i64), sp.seed_range as i64) as i32;
@@ -305,7 +326,7 @@ pub fn tick(sim: &mut Sim) {
                         if winter_ok
                             && suitability(sp, grid.temp[j], grid.plant_moisture(j)) > 0.3
                         {
-                            plan.seeds.push((j as u32, p.species));
+                            plan.seeds.push((j as u32, p.species, p.genes));
                         }
                     }
                 }
@@ -317,14 +338,15 @@ pub fn tick(sim: &mut Sim) {
 
     // ordered apply
     let _ = master;
-    let mut new_seeds: Vec<(u32, u8)> = Vec::new();
+    let mut new_seeds: Vec<(u32, u8, [f32; 2])> = Vec::new();
     for (pi, plan) in plans.into_iter().enumerate() {
         let Some(plan) = plan else { continue };
         let (biomass, cell, species) = {
             let p = &mut sim.plants.list[pi];
             p.rng = plan.rng_after;
             p.health = (p.health + plan.d_health).clamp(0.0, 1.2);
-            p.biomass = (p.biomass + plan.d_biomass).min(PLANTS[p.species as usize].max_biomass);
+            p.biomass = (p.biomass + plan.d_biomass)
+                .min(PLANTS[p.species as usize].max_biomass * p.genes[0]);
             (p.biomass, p.cell, p.species)
         };
         let i = cell as usize;
@@ -337,12 +359,13 @@ pub fn tick(sim: &mut Sim) {
         }
         new_seeds.extend(plan.seeds);
     }
-    for (cell, species) in new_seeds {
+    for (cell, species, genes) in new_seeds {
         let day = sim.clock.day as i64;
-        sim.plants.spawn(sim.cfg.seed, species, cell, day, 0.02);
+        sim.plants.spawn_with_genes(sim.cfg.seed, species, cell, day, 0.02, Some(genes));
     }
 
-    // slow nutrient cycle: litter decomposes into soil
+    // slow nutrient cycle: litter decomposes into soil; sunlit water grows its own fall of
+    // algal matter (real mass in the litter column — the base of the aquatic food chain)
     if day % 7 == 3 {
         for i in 0..n_cells {
             let l = sim.grid.litter[i];
@@ -350,6 +373,13 @@ pub fn tick(sim: &mut Sim) {
                 let dec = l * 0.02;
                 sim.grid.litter[i] -= dec;
                 sim.grid.soil_n[i] = (sim.grid.soil_n[i] + dec * 0.5).min(1.5);
+            }
+            if !sim.grid.ocean[i]
+                && sim.grid.surface[i] > 0.05
+                && sim.grid.temp[i] > 5.0
+                && sim.grid.litter[i] < 2.0
+            {
+                sim.grid.litter[i] += 0.035 * (sim.grid.soil_n[i].min(1.0) + 0.3);
             }
         }
     }

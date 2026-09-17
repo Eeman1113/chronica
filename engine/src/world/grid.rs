@@ -27,6 +27,7 @@ pub struct Grid {
     pub temp: Vec<f32>,      // today's surface temperature (deg C)
     pub rain: Vec<f32>,      // today's rainfall depth
     pub snow: Vec<f32>,      // snowpack depth
+    pub ice: Vec<f32>,       // surface-water ice thickness (walkable when thick)
     // -- disturbance --
     pub burning: Vec<u8>,    // remaining burn ticks (0 = not burning)
     pub burn_scar: Vec<f32>, // 0..1 recent-burn fraction, heals over years
@@ -54,6 +55,7 @@ impl Grid {
             temp: vec![10.0; n],
             rain: vec![0.0; n],
             snow: vec![0.0; n],
+            ice: vec![0.0; n],
             burning: vec![0; n],
             burn_scar: vec![0.0; n],
             contamination: vec![0.0; n],
@@ -94,6 +96,12 @@ impl Grid {
             m += 0.25;
         }
         m
+    }
+
+    /// Thick ice bears weight: winter roads across water (and thin-ice danger at the thaw).
+    #[inline]
+    pub fn ice_bears(&self, i: usize) -> bool {
+        self.ice[i] > 0.08
     }
 
     /// A cell currently holding meaningful fresh water (derived observation).

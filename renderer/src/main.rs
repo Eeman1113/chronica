@@ -480,6 +480,8 @@ impl eframe::App for App {
                             } else {
                                 (["~", "≈", "~", "≈"][v], egui::Color32::from_rgb(70, 110, 180), egui::Color32::from_rgb(16, 30, 60))
                             }
+                        } else if g.ice_bears(i) {
+                            (["═", "─", "═", "═"][v], egui::Color32::from_rgb(200, 225, 245), egui::Color32::from_rgb(90, 120, 150))
                         } else if g.surface[i] > 0.12 {
                             if g.is_river(i) {
                                 (["≈", "~", "≈", "~"][v], egui::Color32::from_rgb(130, 185, 245), egui::Color32::from_rgb(26, 46, 90))
@@ -743,6 +745,7 @@ impl eframe::App for App {
                         chronica_engine::humans::HumanAction::Socialize { .. } => "talking",
                         chronica_engine::humans::HumanAction::Court { .. } => "courting",
                         chronica_engine::humans::HumanAction::TendFarm => "farming",
+                        chronica_engine::humans::HumanAction::PreserveFood => "smoking food",
                         chronica_engine::humans::HumanAction::Rest => "resting",
                         chronica_engine::humans::HumanAction::Flee { .. } => "fleeing!",
                         chronica_engine::humans::HumanAction::MoveTo { .. } => "walking",

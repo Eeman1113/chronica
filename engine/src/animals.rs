@@ -37,6 +37,9 @@ pub struct Animal {
     pub pregnant_by: AnimalId, // NONE if not pregnant
     pub due_day: u64,
     pub water_memory: Option<(i32, i32)>,
+    pub forage_memory: Option<(i32, i32)>, // remembered good grazing
+    pub danger_memory: Option<(i32, i32)>, // remembered attack site
+    pub infection: Option<(u8, u64)>,      // pathogen, day caught
     pub tamed_by: crate::core::ids::PersonId, // NONE = wild
     pub tame_prog: f32,
     pub days_starving: u16,
@@ -115,6 +118,9 @@ impl Animals {
             pregnant_by: AnimalId::NONE,
             due_day: 0,
             water_memory: None,
+            forage_memory: None,
+            danger_memory: None,
+            infection: None,
             tamed_by: crate::core::ids::PersonId::NONE,
             tame_prog: 0.0,
             days_starving: 0,
@@ -153,6 +159,32 @@ pub fn generate(sim: &mut Sim) {
         (crate::species::A_HORSE, 0.001),
         (crate::species::A_AUROCHS, 0.001),
     ];
+    // trout fill the rivers and lakes the rain has made
+    {
+        let mut placed = 0;
+        for i in 0..sim.grid.n() {
+            if sim.grid.is_fresh_water(i) && sim.grid.surface[i] > 0.06 {
+                if rng.chance(0.45) {
+                    let (x, y) = sim.grid.xy(i);
+                    let back = rng.range_i(0, (7.0f32 * 360.0 * 0.5) as i64);
+                    sim.animals.spawn(
+                        sim.cfg.seed,
+                        crate::species::A_FISH,
+                        x,
+                        y,
+                        -back,
+                        AnimalId::NONE,
+                        AnimalId::NONE,
+                        None,
+                    );
+                    placed += 1;
+                    if placed > 900 {
+                        break;
+                    }
+                }
+            }
+        }
+    }
     let h = sim.grid.h as f32;
     for &(spi, dens) in per_species_density {
         let sp = &ANIMALS[spi as usize];
@@ -349,6 +381,15 @@ pub fn tick(sim: &mut Sim) {
         if p.water_near.is_none() {
             p.water_near = a.water_memory;
         }
+        if p.forage_near.is_none() && a.hunger > 0.6 {
+            if let Some(m) = a.forage_memory {
+                // nothing in sight: head for the ground that fed you before
+                if (m.0 - a.x).abs().max((m.1 - a.y).abs()) > 2 {
+                    p.forage_near = Some(m);
+                    p.forage_near_val = 0.2;
+                }
+            }
+        }
         // carrion for meat-eaters
         if sp.diet != Diet::Herbivore {
             for (ci, c) in animals.corpses.iter().enumerate() {
@@ -386,6 +427,7 @@ pub fn tick(sim: &mut Sim) {
             genes: a.genes,
             is_carnivore: sp.diet != Diet::Herbivore,
             is_herbivore: sp.diet != Diet::Carnivore,
+            is_aquatic: sp.aquatic,
             mature: age_y >= sp.maturity_y,
             pregnant: !a.pregnant_by.is_none(),
         };
@@ -473,13 +515,85 @@ pub fn tick(sim: &mut Sim) {
         }
     }
 
+    // ---------- aquatic physiology: water is breath; stranding kills ----------
+    for ai in 0..sim.animals.list.len() {
+        let (aquatic, x, y, alive) = {
+            let a = &sim.animals.list[ai];
+            (
+                ANIMALS[a.species as usize].aquatic,
+                a.x,
+                a.y,
+                a.alive,
+            )
+        };
+        if !alive || !aquatic {
+            continue;
+        }
+        let here = sim.grid.idx(x, y);
+        let depth_here = here.map(|j| sim.grid.surface[j]).unwrap_or(0.0);
+        // fish follow the falling water: when the shallows shrink, swim for the deep
+        if depth_here < 0.06 {
+            let mut best: Option<((i32, i32), f32)> = None;
+            for r in 1..=3i32 {
+                for dy in -r..=r {
+                    for dx in -r..=r {
+                        if dx.abs() != r && dy.abs() != r {
+                            continue;
+                        }
+                        if let Some(j) = sim.grid.idx(x + dx, y + dy) {
+                            if !sim.grid.ocean[j] {
+                                let d = sim.grid.surface[j];
+                                if d > depth_here + 0.02
+                                    && best.map(|(_, bd)| d > bd).unwrap_or(true)
+                                {
+                                    best = Some(((x + dx, y + dy), d));
+                                }
+                            }
+                        }
+                    }
+                }
+                if best.is_some() {
+                    break;
+                }
+            }
+            if let Some((to, _)) = best {
+                let a = &mut sim.animals.list[ai];
+                a.x = to.0;
+                a.y = to.1;
+            }
+        }
+        let wet = sim
+            .grid
+            .idx(sim.animals.list[ai].x, sim.animals.list[ai].y)
+            .map(|j| wet_enough(sim, j))
+            .unwrap_or(false);
+        {
+            let a = &mut sim.animals.list[ai];
+            a.thirst = 0.0;
+            if wet {
+                a.days_thirsty = 0;
+            } else {
+                a.days_thirsty += 1;
+            }
+        }
+        if sim.animals.list[ai].days_thirsty > 6 {
+            kill_animal(
+                sim,
+                ai,
+                DeathCause::Exposure,
+                vec![Cause::State(StateRef { what: StateKind::SurfaceWater, value: 0.0 })],
+                true,
+            );
+        }
+    }
+
     // ---------- physiology (ordered) ----------
     for ai in 0..sim.animals.list.len() {
         if !sim.animals.list[ai].alive {
             continue;
         }
         // a flood under your feet is an emergency: wade toward the nearest dry ground
-        {
+        if !ANIMALS[sim.animals.list[ai].species as usize].aquatic {
             let (x, y) = {
                 let a = &sim.animals.list[ai];
                 (a.x, a.y)
@@ -518,6 +632,8 @@ pub fn tick(sim: &mut Sim) {
                     }
                 }
             }
+        } else {
+            // aquatic: keep thirst zeroed in the shared block below
         }
         let sp = &ANIMALS[sim.animals.list[ai].species as usize];
         let (starved, parched, aged, froze, birth) = {
@@ -588,6 +704,72 @@ pub fn tick(sim: &mut Sim) {
             for _ in 0..litter {
                 births.push((spi, x, y, mid, fid, genes, generation));
             }
+        }
+    }
+
+    // ---------- sickness among beasts: born of crowding, passed nose to nose ----------
+    if day % 5 == 2 {
+        let n_a = sim.animals.list.len();
+        let mut new_cases: Vec<(usize, u8, Option<usize>)> = Vec::new();
+        for ai in 0..n_a {
+            let (alive, x, y, sp, infected) = {
+                let a = &sim.animals.list[ai];
+                (a.alive, a.x, a.y, a.species, a.infection)
+            };
+            if !alive {
+                continue;
+            }
+            // count the actual crowd around this animal
+            let mut crowd = 0;
+            let mut sick_neighbor: Option<usize> = None;
+            sim.animals.index.for_each_near(x, y, 2, |oi| {
+                let o = &sim.animals.list[oi as usize];
+                if o.alive && oi as usize != ai {
+                    crowd += 1;
+                    if o.infection.is_some() && o.species == sp {
+                        sick_neighbor = Some(oi as usize);
+                    }
+                }
+            });
+            if infected.is_none() {
+                if let Some(src) = sick_neighbor {
+                    let pg = sim.animals.list[src].infection.unwrap().0;
+                    let catches = {
+                        let a = &mut sim.animals.list[ai];
+                        a.rng.chance(0.15)
+                    };
+                    if catches {
+                        new_cases.push((ai, pg, Some(src)));
+                    }
+                } else if crowd >= 7 {
+                    // dense herds breed the murrain; marshes breed the fever — the crowding
+                    // and the wet ground are the cited causes, never a calendar
+                    let wet = sim
+                        .grid
+                        .idx(x, y)
+                        .map(|i| sim.grid.surface[i] > 0.02)
+                        .unwrap_or(false);
+                    let pg = if wet { 0u8 } else { 1u8 };
+                    let sparked = {
+                        let a = &mut sim.animals.list[ai];
+                        a.rng.chance(0.004)
+                    };
+                    if sparked {
+                        new_cases.push((ai, pg, None));
+                    }
+                }
+            } else if let Some((_pg, since)) = infected {
+                if day.saturating_sub(since) > 30 {
+                    sim.animals.list[ai].infection = None; // recovered
+                } else {
+                    let a = &mut sim.animals.list[ai];
+                    a.condition = (a.condition - 0.01).max(0.1);
+                }
+            }
+        }
+        for (ai, pg, _src) in new_cases {
+            let d = sim.clock.day;
+            sim.animals.list[ai].infection = Some((pg, d));
         }
     }
 
@@ -685,12 +867,21 @@ fn edible_at_g(sim: &Sim, cell: usize) -> f32 {
 
 /// Deep water is no place for a land animal (floods are real and must be fled).
 #[inline]
+fn wet_enough(sim: &Sim, j: usize) -> bool {
+    sim.grid.surface[j] > 0.02 && !sim.grid.ocean[j]
+}
+
+#[inline]
 fn too_deep(sim: &Sim, j: usize) -> bool {
+    if sim.grid.ice_bears(j) {
+        return false; // winter roads
+    }
     sim.grid.ocean[j] || sim.grid.surface[j] > 0.5
 }
 
 /// Step toward a destination, stopping ON it.
 fn move_animal_toward(sim: &mut Sim, ai: usize, to: (i32, i32), steps: i32) {
+    let aquatic = ANIMALS[sim.animals.list[ai].species as usize].aquatic;
     for _ in 0..steps {
         let (dir, arrived) = {
             let a = &sim.animals.list[ai];
@@ -704,7 +895,7 @@ fn move_animal_toward(sim: &mut Sim, ai: usize, to: (i32, i32), steps: i32) {
             (a.x + dir.0, a.y + dir.1)
         };
         match sim.grid.idx(nx, ny) {
-            Some(j) if !too_deep(sim, j) => {
+            Some(j) if (aquatic && wet_enough(sim, j)) || (!aquatic && !too_deep(sim, j)) => {
                 let a = &mut sim.animals.list[ai];
                 a.x = nx;
                 a.y = ny;
@@ -715,13 +906,14 @@ fn move_animal_toward(sim: &mut Sim, ai: usize, to: (i32, i32), steps: i32) {
 }
 
 fn move_animal(sim: &mut Sim, ai: usize, dir: (i32, i32), steps: i32) {
+    let aquatic = ANIMALS[sim.animals.list[ai].species as usize].aquatic;
     for _ in 0..steps {
         let (nx, ny) = {
             let a = &sim.animals.list[ai];
             (a.x + dir.0, a.y + dir.1)
         };
         match sim.grid.idx(nx, ny) {
-            Some(j) if !too_deep(sim, j) => {
+            Some(j) if (aquatic && wet_enough(sim, j)) || (!aquatic && !too_deep(sim, j)) => {
                 let a = &mut sim.animals.list[ai];
                 a.x = nx;
                 a.y = ny;
@@ -777,8 +969,20 @@ fn graze(sim: &mut Sim, ai: usize) {
             vec![Cause::State(StateRef { what: StateKind::Hunger, value: 1.0 })],
         );
     }
+    // bottom-feeders: aquatic grazers also sift real detritus from the bed
+    if ANIMALS[sim.animals.list[ai].species as usize].aquatic && need > 0.0 {
+        let lit = sim.grid.litter[cell];
+        let sift = (need * 2.0).min(lit * 0.3);
+        if sift > 0.0 {
+            sim.grid.litter[cell] -= sift;
+            eaten += sift * 0.5;
+        }
+    }
     let a = &mut sim.animals.list[ai];
     let sp = &ANIMALS[a.species as usize];
+    if eaten > sp.mass * 0.002 {
+        a.forage_memory = Some((a.x, a.y)); // this ground fed me
+    }
     a.hunger = (a.hunger - eaten / (sp.mass * 0.003).max(0.05)).max(0.0);
 }
 
@@ -870,9 +1074,10 @@ fn hunt(sim: &mut Sim, ai: usize, ti: usize, deaths: &mut Vec<(usize, DeathCause
             vec![Cause::Event(kill_ev)],
         );
     } else {
-        // prey breaks away, shaken
+        // prey breaks away, shaken — and it will remember this place
         let t = &mut sim.animals.list[ti];
         t.fear = (t.fear + 0.8).min(2.0);
+        t.danger_memory = Some((t.x, t.y));
         let a = &mut sim.animals.list[ai];
         a.fatigue = (a.fatigue + 0.3).min(1.5);
     }

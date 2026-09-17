@@ -103,7 +103,8 @@ pub fn tick(sim: &mut Sim) {
         sim.grid.burn_scar[i] = 1.0;
         // burn the plants that are actually here (their deaths caused by this fire)
         to_kill.push((i, origin));
-        // spread to neighbors with enough dry fuel; probability scales with their fuel load
+        // spread to neighbors with enough dry fuel; the wind carries the fire downwind
+        let (wx, wy) = crate::climate::wind_today(sim.cfg.seed, day);
         let (x, y) = sim.grid.xy(i);
         for k in 0..8 {
             if let Some(j) = sim.grid.idx(x + DX8[k], y + DY8[k]) {
@@ -112,7 +113,12 @@ pub fn tick(sim: &mut Sim) {
                 }
                 let fuel_j = fuel_at(sim, j);
                 let dry_j = sim.grid.rain[j] <= 0.0 && sim.grid.surface[j] < 0.01;
-                if fuel_j > 0.5 && dry_j && rng.chance((fuel_j * 0.06).min(0.5)) {
+                // alignment of this direction with today's wind: downwind ×3, upwind ×0.25
+                let dl = ((DX8[k] as f32 * wx + DY8[k] as f32 * wy)
+                    / (DX8[k] as f32).hypot(DY8[k] as f32))
+                    .clamp(-1.0, 1.0);
+                let wind_mul = if dl > 0.3 { 3.0 } else if dl < -0.3 { 0.25 } else { 1.0 };
+                if fuel_j > 0.5 && dry_j && rng.chance((fuel_j * 0.06 * wind_mul).min(0.6)) {
                     spread_to.push((j, origin));
                 }
             }
