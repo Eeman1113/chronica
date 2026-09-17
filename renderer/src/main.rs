@@ -22,6 +22,7 @@ struct App {
     selected_animal: Option<usize>,
     why_lines: Vec<String>,
     seed_input: String,
+    notable_only: bool,
 }
 
 impl App {
@@ -39,6 +40,7 @@ impl App {
             selected_animal: None,
             why_lines: Vec::new(),
             seed_input: seed.to_string(),
+            notable_only: true,
         }
     }
 
@@ -119,9 +121,23 @@ impl eframe::App for App {
                 ui.label("seed:");
                 ui.text_edit_singleline(&mut self.seed_input);
                 if ui.button("new world").clicked() {
-                    if let Ok(seed) = self.seed_input.parse::<u64>() {
-                        *self = App::new(seed);
-                    }
+                    // any text works as a seed: numbers parse, words hash
+                    let t = self.seed_input.trim();
+                    let seed = t.parse::<u64>().unwrap_or_else(|_| {
+                        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+                        for b in t.as_bytes() {
+                            h ^= *b as u64;
+                            h = h.wrapping_mul(0x0000_0100_0000_01B3);
+                        }
+                        h
+                    });
+                    // world generation takes a few seconds; make that visible
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Title(
+                        "Chronica — generating world…".into(),
+                    ));
+                    *self = App::new(seed);
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::Title("Chronica".into()));
                 }
             });
         });
@@ -261,10 +277,37 @@ impl eframe::App for App {
         });
 
         egui::TopBottomPanel::bottom("chronicle").min_height(140.0).show(ctx, |ui| {
-            ui.heading("Chronicle");
+            ui.horizontal(|ui| {
+                ui.heading("Chronicle");
+                ui.checkbox(&mut self.notable_only, "notable only");
+            });
             egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
-                let n = self.sim.history.events.len();
-                for ev in self.sim.history.events[n.saturating_sub(40)..].iter() {
+                use chronica_engine::core::ids::EntityRef as ER;
+                use chronica_engine::history::EventKind as EK;
+                let notable = |ev: &chronica_engine::history::Event| -> bool {
+                    let human = matches!(ev.subject, ER::Person(_));
+                    match &ev.kind {
+                        EK::PlantDied { .. } => false,
+                        EK::Born { .. } | EK::Died { .. } | EK::Mated { .. } | EK::Ate { .. } => {
+                            human
+                        }
+                        EK::Killed { by } => human || matches!(by, ER::Person(_)),
+                        EK::LightningStrike | EK::FireDied => false,
+                        _ => true,
+                    }
+                };
+                let mut shown = 0;
+                let mut lines: Vec<&chronica_engine::history::Event> = Vec::new();
+                for ev in self.sim.history.events.iter().rev() {
+                    if !self.notable_only || notable(ev) {
+                        lines.push(ev);
+                        shown += 1;
+                        if shown >= 40 {
+                            break;
+                        }
+                    }
+                }
+                for ev in lines.iter().rev() {
                     let line = inspection::describe(&self.sim, ev);
                     if ui.link(line).clicked() {
                         self.why_lines = inspection::why_text(&self.sim, ev.id, 10);

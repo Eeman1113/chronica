@@ -37,6 +37,8 @@ pub struct Animal {
     pub pregnant_by: AnimalId, // NONE if not pregnant
     pub due_day: u64,
     pub water_memory: Option<(i32, i32)>,
+    pub tamed_by: crate::core::ids::PersonId, // NONE = wild
+    pub tame_prog: f32,
     pub days_starving: u16,
     pub days_thirsty: u16,
     pub rationale: Rationale, // last decision's recorded reasoning
@@ -113,6 +115,8 @@ impl Animals {
             pregnant_by: AnimalId::NONE,
             due_day: 0,
             water_memory: None,
+            tamed_by: crate::core::ids::PersonId::NONE,
+            tame_prog: 0.0,
             days_starving: 0,
             days_thirsty: 0,
             rationale: Rationale::default(),
@@ -247,6 +251,14 @@ pub fn tick(sim: &mut Sim) {
         if herd_sum.2 >= 2 {
             p.herd_center =
                 Some(((herd_sum.0 / herd_sum.2) as i32, (herd_sum.1 / herd_sum.2) as i32));
+        }
+        // a tamed beast stays with its keeper: the herd is wherever they are
+        if let Some(owner) = a.tamed_by.some() {
+            if let Some(o) = sim_humans_list.get(owner.index()) {
+                if o.alive {
+                    p.herd_center = Some(o.camp);
+                }
+            }
         }
         // a desperate predator sees people too
         if sp.diet != Diet::Herbivore && sp.mass > 30.0 && a.hunger > 1.0 {
@@ -473,7 +485,7 @@ pub fn tick(sim: &mut Sim) {
                 (a.x, a.y)
             };
             if let Some(here) = sim.grid.idx(x, y) {
-                if too_deep(sim, here) {
+                if sim.grid.ocean[here] || sim.grid.surface[here] > 0.5 {
                     let mut best: Option<((i32, i32), f32)> = None;
                     for r in 1..=4i32 {
                         for dy in -r..=r {
@@ -484,7 +496,7 @@ pub fn tick(sim: &mut Sim) {
                                 if let Some(j) = sim.grid.idx(x + dx, y + dy) {
                                     if !sim.grid.ocean[j] {
                                         let d = sim.grid.surface[j];
-                                        if d < 0.12
+                                        if d < 0.25
                                             && best.map(|(_, bd)| d < bd).unwrap_or(true)
                                         {
                                             best = Some(((x + dx, y + dy), d));
@@ -622,7 +634,17 @@ pub fn tick(sim: &mut Sim) {
 
 #[inline]
 fn grid_fresh(sim: &Sim, x: i32, y: i32) -> bool {
-    sim.grid.idx(x, y).map(|i| sim.grid.is_fresh_water(i)).unwrap_or(false)
+    // the bank counts: an animal drinks from the water's edge
+    for dy in -1i32..=1 {
+        for dx in -1i32..=1 {
+            if let Some(j) = sim.grid.idx(x + dx, y + dy) {
+                if sim.grid.is_fresh_water(j) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 #[allow(dead_code)]
@@ -664,7 +686,7 @@ fn edible_at_g(sim: &Sim, cell: usize) -> f32 {
 /// Deep water is no place for a land animal (floods are real and must be fled).
 #[inline]
 fn too_deep(sim: &Sim, j: usize) -> bool {
-    sim.grid.ocean[j] || sim.grid.surface[j] > 0.12
+    sim.grid.ocean[j] || sim.grid.surface[j] > 0.5
 }
 
 /// Step toward a destination, stopping ON it.

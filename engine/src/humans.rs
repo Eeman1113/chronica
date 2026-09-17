@@ -334,7 +334,7 @@ pub fn generate(sim: &mut Sim) {
             }
         }
         let culture = bi as u8;
-        let band_n = 9 + (rng.next_u64() % 4) as i64;
+        let band_n = 17 + (rng.next_u64() % 6) as i64;
         let first_idx = sim.humans.list.len();
         for _ in 0..band_n {
             let back = rng.range_i(16 * 360, 40 * 360);
@@ -710,14 +710,34 @@ fn move_human(sim: &mut Sim, hi: usize, dir: (i32, i32), steps: i32) {
             (h.x + dir.0, h.y + dir.1)
         };
         match sim.grid.idx(nx, ny) {
-            Some(j) if !sim.grid.ocean[j] => {
+            Some(j) if !sim.grid.ocean[j] && sim.grid.surface[j] <= 0.6 => {
+                let deep = sim.grid.surface[j] > 0.2;
                 let h = &mut sim.humans.list[hi];
                 h.x = nx;
                 h.y = ny;
+                if deep {
+                    // fording costs the day and the legs
+                    h.fatigue = (h.fatigue + 0.15).min(1.5);
+                    break;
+                }
             }
             _ => break,
         }
     }
+}
+
+/// Fresh water on your cell or any neighboring cell is drinkable — you kneel at the bank.
+fn near_fresh(sim: &Sim, x: i32, y: i32) -> bool {
+    for dy in -1i32..=1 {
+        for dx in -1i32..=1 {
+            if let Some(j) = sim.grid.idx(x + dx, y + dy) {
+                if sim.grid.is_fresh_water(j) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Step toward a destination, stopping ON it (never overshooting past it).
@@ -735,10 +755,15 @@ fn move_toward_h(sim: &mut Sim, hi: usize, to: (i32, i32), steps: i32) {
             (h.x + dir.0, h.y + dir.1)
         };
         match sim.grid.idx(nx, ny) {
-            Some(j) if !sim.grid.ocean[j] => {
+            Some(j) if !sim.grid.ocean[j] && sim.grid.surface[j] <= 0.6 => {
+                let deep = sim.grid.surface[j] > 0.2;
                 let h = &mut sim.humans.list[hi];
                 h.x = nx;
                 h.y = ny;
+                if deep {
+                    h.fatigue = (h.fatigue + 0.15).min(1.5);
+                    break;
+                }
             }
             _ => break,
         }
@@ -797,6 +822,188 @@ pub fn tick(sim: &mut Sim) {
             }
         }
         apply_action(sim, hi, act, &mut deaths);
+    }
+
+    // ---------- floods: people wade out; dwellings the water takes are lost ----------
+    for hi in 0..n {
+        let (x, y, alive) = {
+            let h = &sim.humans.list[hi];
+            (h.x, h.y, h.alive)
+        };
+        if !alive {
+            continue;
+        }
+        if let Some(here) = sim.grid.idx(x, y) {
+            if !sim.grid.ocean[here] && sim.grid.surface[here] > 0.6 {
+                let mut best: Option<((i32, i32), f32)> = None;
+                for r in 1..=5i32 {
+                    for dy in -r..=r {
+                        for dx in -r..=r {
+                            if dx.abs() != r && dy.abs() != r {
+                                continue;
+                            }
+                            if let Some(j) = sim.grid.idx(x + dx, y + dy) {
+                                if !sim.grid.ocean[j] && sim.grid.surface[j] < 0.5 {
+                                    let d = sim.grid.surface[j];
+                                    if best.map(|(_, bd)| d < bd).unwrap_or(true) {
+                                        best = Some(((x + dx, y + dy), d));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if best.is_some() {
+                        break;
+                    }
+                }
+                if let Some((to, _)) = best {
+                    let h = &mut sim.humans.list[hi];
+                    h.x = to.0;
+                    h.y = to.1;
+                    h.fatigue = (h.fatigue + 0.4).min(1.5);
+                    h.fear = (h.fear + 0.5).min(2.0);
+                    if h.camp == (x, y) {
+                        h.camp = to;
+                    }
+                }
+            }
+        }
+    }
+    if day % 10 == 4 {
+        for bi in 0..sim.objects.buildings.len() {
+            let (lost, builder, cell) = {
+                let b = &sim.objects.buildings[bi];
+                if !b.exists {
+                    continue;
+                }
+                (
+                    sim.grid.surface[b.cell as usize] > 0.5,
+                    b.builder,
+                    b.cell,
+                )
+            };
+            if lost {
+                let salvage = {
+                    let b = &mut sim.objects.buildings[bi];
+                    b.exists = false;
+                    b.food_store * 0.6 // most of the store is carried to safety
+                };
+                if let Some(o) = builder.some() {
+                    if o.index() < sim.humans.list.len() && sim.humans.list[o.index()].alive {
+                        sim.humans.list[o.index()].carried_food += salvage;
+                    }
+                }
+                let bid = crate::objects::Objects::building_id(bi);
+                sim.history.push(
+                    day,
+                    EntityRef::Person(builder),
+                    EventKind::BuildingLost {
+                        building: EntityRef::Building(bid),
+                        to_flood: true,
+                    },
+                    Some(cell),
+                    vec![],
+                );
+                // whoever called it home is homeless now
+                for h in sim.humans.list.iter_mut() {
+                    if h.home == bid {
+                        h.home = crate::core::ids::BuildingId::NONE;
+                    }
+                }
+            }
+        }
+    }
+
+    // ---------- herding: feeding tames; a keeper's beasts feed the lean months ----------
+    for hi in 0..n {
+        let (adult, food, pos, hungry, own_store_low) = {
+            let h = &sim.humans.list[hi];
+            if !h.alive {
+                continue;
+            }
+            let age_y = (day as i64 - h.born) as f32 / 360.0;
+            let store = h
+                .home
+                .some()
+                .map(|b| sim.objects.buildings[b.index()].food_store)
+                .unwrap_or(0.0);
+            (
+                age_y >= 14.0,
+                h.carried_food,
+                (h.x, h.y),
+                h.hunger > 1.0,
+                store < 2.0,
+            )
+        };
+        if !adult {
+            continue;
+        }
+        // find an adjacent domesticable animal (deterministic first match)
+        let mut adj: Option<usize> = None;
+        sim.animals.index.for_each_near(pos.0, pos.1, 1, |ai| {
+            if adj.is_some() {
+                return;
+            }
+            let a = &sim.animals.list[ai as usize];
+            if a.alive
+                && crate::species::ANIMALS[a.species as usize].domesticable
+                && (a.x - pos.0).abs().max((a.y - pos.1).abs()) <= 1
+            {
+                adj = Some(ai as usize);
+            }
+        });
+        let Some(ai) = adj else { continue };
+        let owner_id = Humans::id_of(hi);
+        let is_mine = sim.animals.list[ai].tamed_by == owner_id;
+        let is_wild = sim.animals.list[ai].tamed_by.is_none();
+        let warm = sim.humans.list[hi].traits[2] > 0.45;
+        if is_wild && food > 1.5 && warm {
+            // a patient hand and a shared meal: taming is earned day by day
+            let warmth = sim.humans.list[hi].traits[2];
+            {
+                let h = &mut sim.humans.list[hi];
+                h.carried_food -= 0.10;
+            }
+            let a = &mut sim.animals.list[ai];
+            a.hunger = (a.hunger - 0.4).max(0.0);
+            a.tame_prog += 0.6 + warmth * 0.6;
+            if a.tame_prog >= 6.0 {
+                a.tamed_by = owner_id;
+                let aid = crate::animals::Animals::id_of(ai);
+                sim.history.push(
+                    day,
+                    EntityRef::Person(owner_id),
+                    EventKind::TamedAnimal { animal: EntityRef::Animal(aid) },
+                    sim.grid.idx(pos.0, pos.1).map(|i| i as u32),
+                    vec![],
+                );
+            }
+        } else if is_mine && hungry && own_store_low {
+            // winter's arithmetic: the herd is the larder
+            let aid = crate::animals::Animals::id_of(ai);
+            let meat = crate::species::ANIMALS[sim.animals.list[ai].species as usize].mass
+                * (0.3 + sim.animals.list[ai].condition * 0.4);
+            let ev = sim.history.push(
+                day,
+                EntityRef::Person(owner_id),
+                EventKind::SlaughteredAnimal { animal: EntityRef::Animal(aid) },
+                sim.grid.idx(pos.0, pos.1).map(|i| i as u32),
+                vec![Cause::State(StateRef {
+                    what: StateKind::Hunger,
+                    value: sim.humans.list[hi].hunger,
+                })],
+            );
+            crate::animals::kill_animal(
+                sim,
+                ai,
+                crate::history::DeathCause::Slaughtered,
+                vec![Cause::Event(ev)],
+                false,
+            );
+            let h = &mut sim.humans.list[hi];
+            h.carried_food += meat * 0.12;
+            h.hunger = (h.hunger - 1.0).max(0.0);
+        }
     }
 
     // ---------- physiology (ordered) ----------
@@ -1078,7 +1285,7 @@ fn apply_action(
                 move_toward_h(sim, hi, best, 2);
                 let now_wet = {
                     let h = &sim.humans.list[hi];
-                    sim.grid.idx(h.x, h.y).map(|i| sim.grid.is_fresh_water(i)).unwrap_or(false)
+                    near_fresh(sim, h.x, h.y)
                 };
                 if now_wet {
                     let h = &mut sim.humans.list[hi];
@@ -1090,10 +1297,7 @@ fn apply_action(
             }
             let on_water = {
                 let h = &sim.humans.list[hi];
-                sim.grid
-                    .idx(h.x, h.y)
-                    .map(|i| sim.grid.is_fresh_water(i))
-                    .unwrap_or(false)
+                near_fresh(sim, h.x, h.y)
             };
             if on_water {
                 let h = &mut sim.humans.list[hi];
@@ -1105,12 +1309,9 @@ fn apply_action(
                 let h = &sim.humans.list[hi];
                 let (arrived_dry, hx, hy) = {
                     let h = &sim.humans.list[hi];
-                    let wet = sim
-                        .grid
-                        .idx(h.x, h.y)
-                        .map(|i| sim.grid.is_fresh_water(i))
-                        .unwrap_or(false);
-                    ((h.x, h.y) == at && !wet, h.x, h.y)
+                    let wet = near_fresh(sim, h.x, h.y);
+                    let stalled = (h.x - at.0).abs().max((h.y - at.1).abs()) <= 1;
+                    (stalled && !wet, h.x, h.y)
                 };
                 let _ = (hx, hy);
                 if arrived_dry {
@@ -1119,12 +1320,10 @@ fn apply_action(
                     if h.water_memory == Some(at) {
                         h.water_memory = None;
                     }
-                } else if sim
-                    .grid
-                    .idx(sim.humans.list[hi].x, sim.humans.list[hi].y)
-                    .map(|i| sim.grid.is_fresh_water(i))
-                    .unwrap_or(false)
-                {
+                } else if {
+                    let h = &sim.humans.list[hi];
+                    near_fresh(sim, h.x, h.y)
+                } {
                     let h = &mut sim.humans.list[hi];
                     h.thirst = 0.0;
                     h.days_thirsty = 0;

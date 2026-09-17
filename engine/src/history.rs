@@ -85,6 +85,9 @@ pub enum EventKind {
     PeaceMade { with: EntityRef },
     Migrated { from: EntityRef, to_cell: u32 },
     RaidCarriedOut { against: EntityRef },
+    TamedAnimal { animal: EntityRef },
+    SlaughteredAnimal { animal: EntityRef },
+    BuildingLost { building: EntityRef, to_flood: bool },
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
@@ -105,6 +108,7 @@ pub enum DeathCause {
     Felled,    // cut by a person
     Browsed,   // eaten by a herbivore
     Childbirth,
+    Slaughtered, // livestock, by its keeper
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]

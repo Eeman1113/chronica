@@ -69,6 +69,7 @@ fn cause_name(c: DeathCause) -> &'static str {
         DeathCause::Felled => "to the axe",
         DeathCause::Browsed => "eaten to the root",
         DeathCause::Childbirth => "in childbirth",
+        DeathCause::Slaughtered => "under the keeper's knife",
     }
 }
 
@@ -165,6 +166,19 @@ pub fn describe(sim: &Sim, ev: &Event) -> String {
         }
         EventKind::RaidCarriedOut { against } => {
             format!("{s} raided the stores of {}", name_of(sim, *against))
+        }
+        EventKind::TamedAnimal { animal } => {
+            format!("{s} tamed {}", name_of(sim, *animal))
+        }
+        EventKind::SlaughteredAnimal { animal } => {
+            format!("{s} slaughtered {}", name_of(sim, *animal))
+        }
+        EventKind::BuildingLost { to_flood, .. } => {
+            if *to_flood {
+                format!("the waters took {s}'s dwelling")
+            } else {
+                format!("{s}'s dwelling fell to ruin")
+            }
         }
     };
     format!("Year {year}: {body}")
