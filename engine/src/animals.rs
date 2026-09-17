@@ -657,6 +657,10 @@ pub fn tick(sim: &mut Sim) {
             let starved = a.days_starving as f32 > 24.0 + sp.mass.sqrt();
             let parched = a.days_thirsty > 8;
             let aged = (day as i64 - a.born) > a.lifespan_d as i64;
+            // a starving mother's body sheds the pregnancy before it can kill her
+            if !a.pregnant_by.is_none() && a.condition < 0.2 && a.rng.chance(0.03) {
+                a.pregnant_by = AnimalId::NONE;
+            }
             let birth = !a.pregnant_by.is_none() && day >= a.due_day;
             (starved, parched, aged, false, birth)
         };
@@ -1133,13 +1137,29 @@ fn court(sim: &mut Sim, ai: usize, mi: usize) {
     // conception: the female carries; sire recorded (real parentage, Test genetics)
     let day = sim.clock.day;
     let (fi, mi2) = if sim.animals.list[ai].sex == 0 { (ai, mi) } else { (mi, ai) };
-    let ok = {
+    // fertility, not certainty: only a mature, well-conditioned female conceives, and not always
+    let (ok, p) = {
         let f = &sim.animals.list[fi];
-        f.sex == 0 && f.pregnant_by.is_none() && f.hunger < 1.1
+        let sp = &ANIMALS[f.species as usize];
+        let age_y = (day as i64 - f.born) as f32 / 360.0;
+        let ready = f.sex == 0
+            && f.pregnant_by.is_none()
+            && age_y >= sp.maturity_y
+            && f.hunger < 1.0
+            && f.condition > 0.45;
+        // small-fast breeders conceive readily; large slow ones seldom
+        let base = if sp.gestation_d < 60 { 0.4 } else if sp.gestation_d < 200 { 0.22 } else { 0.12 };
+        (ready, base * f.condition)
     };
-    if ok {
+    let conceives = ok && sim.animals.list[fi].rng.chance(p);
+    if conceives {
         let sire = Animals::id_of(mi2);
-        let gest = ANIMALS[sim.animals.list[fi].species as usize].gestation_d;
+        let gest = {
+            let f = &mut sim.animals.list[fi];
+            let g = ANIMALS[f.species as usize].gestation_d;
+            // a touch of natural variation
+            (g as f32 * f.rng.range_f(0.94, 1.06)) as u64
+        };
         let f = &mut sim.animals.list[fi];
         f.pregnant_by = sire;
         f.due_day = day + gest;

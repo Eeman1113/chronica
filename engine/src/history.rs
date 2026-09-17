@@ -90,6 +90,9 @@ pub enum EventKind {
     BuildingLost { building: EntityRef, to_flood: bool },
     CaughtSickness { from: EntityRef, pathogen: u8 },
     RecoveredFromSickness { pathogen: u8 },
+    Conceived { with: EntityRef },
+    Miscarried { cause: DeathCause },
+    Stillbirth,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]

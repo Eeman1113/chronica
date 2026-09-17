@@ -173,6 +173,13 @@ pub fn describe(sim: &Sim, ev: &Event) -> String {
         EventKind::SlaughteredAnimal { animal } => {
             format!("{s} slaughtered {}", name_of(sim, *animal))
         }
+        EventKind::Conceived { with } => {
+            format!("{s} conceived a child with {}", name_of(sim, *with))
+        }
+        EventKind::Miscarried { cause } => {
+            format!("{s} lost the child she carried ({})", cause_name(*cause))
+        }
+        EventKind::Stillbirth => format!("{s}'s child was stillborn"),
         EventKind::CaughtSickness { from, pathogen } => format!(
             "{s} caught the {} from {}",
             crate::pathogens::PATHOGENS[*pathogen as usize].name,

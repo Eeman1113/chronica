@@ -145,6 +145,9 @@ pub struct Human {
     pub spouse: PersonId,
     pub pregnant_by: PersonId,
     pub due_day: u64,
+    pub last_birth_day: i64,  // for the postpartum recovery window (-1 = never)
+    pub pregnancies: u16,     // how many she has carried
+    pub carrying_twins: bool,
     // economy
     pub carried_food: f32,
     pub seed_genes: Option<[f32; 2]>, // the strain you saved seed from — selection in action
@@ -255,6 +258,9 @@ impl Humans {
             spouse: PersonId::NONE,
             pregnant_by: PersonId::NONE,
             due_day: 0,
+            last_birth_day: -1,
+            pregnancies: 0,
+            carrying_twins: false,
             carried_food: 0.5,
             seed_genes: None,
             carried_water: 4.0,
@@ -815,6 +821,36 @@ fn decide(sim: &Sim, hi: usize, p: &HumanPercepts) -> (HumanAction, HumanRationa
         }
     };
     (act, r)
+}
+
+/// A woman's chance of conceiving on a given day she is with her partner — the product of a
+/// real age-fertility curve, her nutrition and health, and the postpartum recovery window.
+/// Zero outside the fertile years; peaks in the twenties; most days do NOT end in conception.
+pub fn female_fertility(age_y: f32, nutrition: f32, health: f32, days_since_birth: i64) -> f32 {
+    let age_f = if age_y < 15.0 {
+        0.0
+    } else if age_y < 21.0 {
+        (age_y - 15.0) / 6.0 // ramp to full over the late teens
+    } else if age_y < 33.0 {
+        1.0 // peak years
+    } else if age_y < 41.0 {
+        1.0 - (age_y - 33.0) / 8.0 * 0.7 // gentle decline
+    } else if age_y < 49.0 {
+        0.3 - (age_y - 41.0) / 8.0 * 0.3 // rare, then gone
+    } else {
+        0.0
+    };
+    if age_f <= 0.0 {
+        return 0.0;
+    }
+    let body = ((nutrition - 0.35) / 0.5).clamp(0.0, 1.0) * (0.4 + 0.6 * health.clamp(0.0, 1.0));
+    // the body needs time between children; fertility returns over ~a year of nursing
+    let post = if days_since_birth < 0 {
+        1.0
+    } else {
+        ((days_since_birth as f32 - 120.0) / 300.0).clamp(0.0, 1.0)
+    };
+    age_f * body * post
 }
 
 pub fn remember(h: &mut Human, day: u64, kind: MemoryKind, weight: f32) {
@@ -1581,57 +1617,51 @@ pub fn tick(sim: &mut Sim) {
     }
 
     for (mi, father) in births {
-        let (x, y, culture, mname) = {
+        let (x, y, culture, mname, twins, age_y, mhealth) = {
             let m = &mut sim.humans.list[mi];
             m.pregnant_by = PersonId::NONE;
-            (m.x, m.y, m.culture, m.name.clone())
+            let t = m.carrying_twins;
+            m.carrying_twins = false;
+            m.last_birth_day = day as i64;
+            m.pregnancies = m.pregnancies.saturating_add(1);
+            let age_y = (day as i64 - m.born) as f32 / 360.0;
+            (m.x, m.y, m.culture, m.name.clone(), t, age_y, m.health)
         };
-        let name = {
+        // the oldest danger: childbirth. Worse for the very young, the older mother, and twins.
+        let birth_risk = (0.012
+            + if age_y < 18.0 { 0.02 } else { 0.0 }
+            + if age_y > 38.0 { 0.03 } else { 0.0 }
+            + if twins { 0.02 } else { 0.0 })
+            * (1.6 - mhealth).clamp(0.4, 1.6);
+        let mother_dies = {
             let m = &mut sim.humans.list[mi];
-            make_name(&mut m.rng, culture)
+            m.rng.chance(birth_risk)
         };
-        let ci = sim.humans.spawn(
-            sim.cfg.seed,
-            name,
-            culture,
-            x,
-            y,
-            day as i64,
-            Humans::id_of(mi),
-            father,
-        );
-        let cid = Humans::id_of(ci);
-        {
-            let ml = sim.humans.list[mi].lineage;
-            sim.humans.list[ci].lineage = ml;
+        let n_babies = if twins { 2 } else { 1 };
+        for _ in 0..n_babies {
+            // a stillbirth is a real, cited outcome, not an error
+            let stillborn = {
+                let m = &mut sim.humans.list[mi];
+                m.rng.chance(0.03 + (0.5 - mhealth).max(0.0) * 0.1)
+            };
+            if stillborn {
+                sim.history.push(
+                    day,
+                    EntityRef::Person(Humans::id_of(mi)),
+                    EventKind::Stillbirth,
+                    sim.grid.idx(x, y).map(|i| i as u32),
+                    vec![],
+                );
+                continue;
+            }
+            birth_one(sim, mi, father, x, y, culture);
         }
-        add_rel(sim, mi, ci, RelKind::ParentOf, 2.0);
-        add_rel(sim, ci, mi, RelKind::ChildOf, 2.0);
-        {
-            let mhome = sim.humans.list[mi].home;
-            let c = &mut sim.humans.list[ci];
-            c.home = mhome; // born under the mother's roof
+        if mother_dies {
+            kill_human(sim, mi, DeathCause::Childbirth, vec![]);
         }
-        if !father.is_none() {
-            add_rel(sim, father.index(), ci, RelKind::ParentOf, 2.0);
-            add_rel(sim, ci, father.index(), RelKind::ChildOf, 2.0);
-        }
-        {
-            let m = &mut sim.humans.list[mi];
-            remember(m, day, MemoryKind::ChildBorn { child: cid }, 1.5);
-        }
-        sim.history.push(
-            day,
-            EntityRef::Person(cid),
-            EventKind::Born {
-                mother: EntityRef::Person(Humans::id_of(mi)),
-                father: EntityRef::Person(father),
-            },
-            sim.grid.idx(x, y).map(|i| i as u32),
-            vec![],
-        );
         let _ = mname;
     }
+
 
     // family life: parents provide — a child's camp is its mother's, and a parent who is
     // actually beside a hungry child shares from the hand. Orphans face the world alone:
@@ -1717,15 +1747,85 @@ pub fn tick(sim: &mut Sim) {
             (o.x - h.x).abs().max((o.y - h.y).abs()) <= 1
         };
         if together {
+            let (p, twins) = {
+                let h = &sim.humans.list[hi];
+                let age_y = (day as i64 - h.born) as f32 / 360.0;
+                let fert =
+                    female_fertility(age_y, h.nutrition, h.health, if h.last_birth_day < 0 { -1 } else { day as i64 - h.last_birth_day });
+                (0.035 * fert, age_y) // base daily chance × fertility; most days: nothing
+            };
+            let _ = twins;
             let conceive = {
                 let h = &mut sim.humans.list[hi];
-                h.rng.chance(0.05)
+                h.rng.chance(p)
             };
             if conceive {
-                let h = &mut sim.humans.list[hi];
-                h.pregnant_by = sp;
-                h.due_day = day + 270;
+                let twin = {
+                    let h = &mut sim.humans.list[hi];
+                    h.rng.chance(0.018)
+                };
+                let (fx, fy) = {
+                    let h = &mut sim.humans.list[hi];
+                    h.pregnant_by = sp;
+                    // a real, slightly variable nine months
+                    h.due_day = day + h.rng.range_i(262, 284) as u64;
+                    h.carrying_twins = twin;
+                    (h.x, h.y)
+                };
+                sim.history.push(
+                    day,
+                    EntityRef::Person(Humans::id_of(hi)),
+                    EventKind::Conceived { with: EntityRef::Person(sp) },
+                    sim.grid.idx(fx, fy).map(|i| i as u32),
+                    vec![],
+                );
             }
+        }
+    }
+
+    // pregnancy is carried in the body, and the body can fail it: starvation, sickness, or a
+    // hard fall ends a pregnancy before its time — each loss cited to its real cause
+    for hi in 0..n {
+        let (pregnant, cause) = {
+            let h = &sim.humans.list[hi];
+            if !h.alive || h.pregnant_by.is_none() {
+                (false, DeathCause::Age)
+            } else if h.nutrition < 0.15 {
+                (true, DeathCause::Starvation)
+            } else if h
+                .infections
+                .iter()
+                .any(|(pg, since, _)| day.saturating_sub(*since) >= crate::pathogens::PATHOGENS[*pg as usize].incubation_d)
+            {
+                (true, DeathCause::Disease)
+            } else {
+                (false, DeathCause::Age)
+            }
+        };
+        if !pregnant {
+            continue;
+        }
+        let risk = if cause == DeathCause::Starvation { 0.02 } else { 0.006 };
+        let lost = {
+            let h = &mut sim.humans.list[hi];
+            h.rng.chance(risk)
+        };
+        if lost {
+            let hx = sim.humans.list[hi].x;
+            let hy = sim.humans.list[hi].y;
+            {
+                let h = &mut sim.humans.list[hi];
+                h.pregnant_by = PersonId::NONE;
+                h.carrying_twins = false;
+                h.grief = (h.grief + 0.6).min(2.0);
+            }
+            sim.history.push(
+                day,
+                EntityRef::Person(Humans::id_of(hi)),
+                EventKind::Miscarried { cause },
+                sim.grid.idx(hx, hy).map(|i| i as u32),
+                vec![],
+            );
         }
     }
 
@@ -3035,4 +3135,55 @@ pub fn kill_human(sim: &mut Sim, hi: usize, cause: DeathCause, causes: Vec<Cause
 /// Derived observation.
 pub fn population(sim: &Sim) -> usize {
     sim.humans.list.iter().filter(|h| h.alive).count()
+}
+
+/// Bring one child into the world from a known mother and father.
+fn birth_one(sim: &mut Sim, mi: usize, father: PersonId, x: i32, y: i32, culture: u8) {
+    let day = sim.clock.day;
+{
+        let name = {
+            let m = &mut sim.humans.list[mi];
+            make_name(&mut m.rng, culture)
+        };
+        let ci = sim.humans.spawn(
+            sim.cfg.seed,
+            name,
+            culture,
+            x,
+            y,
+            day as i64,
+            Humans::id_of(mi),
+            father,
+        );
+        let cid = Humans::id_of(ci);
+        {
+            let ml = sim.humans.list[mi].lineage;
+            sim.humans.list[ci].lineage = ml;
+        }
+        add_rel(sim, mi, ci, RelKind::ParentOf, 2.0);
+        add_rel(sim, ci, mi, RelKind::ChildOf, 2.0);
+        {
+            let mhome = sim.humans.list[mi].home;
+            let c = &mut sim.humans.list[ci];
+            c.home = mhome; // born under the mother's roof
+        }
+        if !father.is_none() {
+            add_rel(sim, father.index(), ci, RelKind::ParentOf, 2.0);
+            add_rel(sim, ci, father.index(), RelKind::ChildOf, 2.0);
+        }
+        {
+            let m = &mut sim.humans.list[mi];
+            remember(m, day, MemoryKind::ChildBorn { child: cid }, 1.5);
+        }
+        sim.history.push(
+            day,
+            EntityRef::Person(cid),
+            EventKind::Born {
+                mother: EntityRef::Person(Humans::id_of(mi)),
+                father: EntityRef::Person(father),
+            },
+            sim.grid.idx(x, y).map(|i| i as u32),
+            vec![],
+        );
+}
 }
