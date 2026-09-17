@@ -1,7 +1,23 @@
-# STAGE_REPORTS.md — reports at each stage gate (directive §7)
+# Chronica Rebuild — Stage Reports
 
-Autonomous overnight run authorized by the user 2026-09-16 ("go fully without halt, no need to
-ask, finish all phases"). Reports are recorded here instead of stopping at each gate.
+Reports produced at each stage gate (directive §7). The autonomous overnight run was authorized
+by the user 2026-09-16 ("go fully without halt, no need to ask, finish all phases"), so reports
+were recorded here instead of stopping at each gate. Companion documents: `AUDIT.md` (Stage 0's
+full prototype audit), `DECISIONS.md` (D-001…D-009), `PERFORMANCE.md` (measured numbers),
+`../README_rust.md` (overview with screenshots).
+
+## Contents
+
+1. [Stage 1 — Core architecture](#stage-1--core-architecture)
+2. [Stage 2 — Physical world](#stage-2--physical-world)
+3. [Stage 3 — Biology](#stage-3--biology)
+4. [Stage 4 — Humans](#stage-4--humans)
+5. [Stage 5+6 — Society, belief, conflict, causal tools](#stage-56--society-belief-conflict-causal-tools)
+6. [Stage 7 — Renderer](#stage-7--renderer)
+7. [Stage 8 — Stress & benchmarks + Final acceptance checklist](#stage-8--stress--benchmarks)
+
+(Stage 0's report was delivered in-conversation at the gate; its artifact is `AUDIT.md` plus the
+design-doc set, committed as `2c90eda`.)
 
 ---
 
