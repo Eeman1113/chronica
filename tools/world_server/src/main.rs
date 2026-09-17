@@ -34,28 +34,44 @@ const LIVE_HTML: &str = r##"<!doctype html><html><head><meta charset="utf-8">
 <style>
 body{margin:0;background:#0c0a08;color:#cfc4a6;font-family:Georgia,serif;overflow:hidden}
 #map{position:fixed;inset:0;cursor:grab}
-#hud{position:fixed;top:0;left:0;right:0;padding:8px 14px;background:rgba(12,10,8,.85);display:flex;gap:16px;align-items:baseline;font-size:14px;z-index:2}
-#hud b{color:#e8dcbc;font-size:17px;letter-spacing:2px}
-.live{color:#e0455a;font-weight:bold} .live::before{content:"●";animation:p 1.4s infinite}
-@keyframes p{50%{opacity:.25}}
-#side{position:fixed;top:44px;right:0;bottom:0;width:320px;background:rgba(12,10,8,.88);padding:12px 16px;overflow-y:auto;font-size:12.5px;line-height:1.55;z-index:2}
+#hud{position:fixed;top:0;left:0;right:0;padding:7px 14px;background:rgba(12,10,8,.9);display:flex;gap:14px;align-items:center;font-size:13px;z-index:3;flex-wrap:wrap}
+#hud b{color:#e8dcbc;font-size:16px;letter-spacing:2px}
+.btn{cursor:pointer;border:1px solid #4a3d30;background:#1a1510;color:#cfc4a6;padding:2px 9px;border-radius:4px;font-size:12px}
+.btn.on{background:#5a4a2a;color:#ffe8b4;border-color:#8a6a3a}
+.dl{color:#e8dcbc;text-decoration:none;border:1px solid #5a4a3a;padding:2px 9px;border-radius:4px}
+#scrub{flex:1;min-width:180px;height:8px;background:#241d15;border-radius:4px;position:relative;cursor:pointer}
+#buf{position:absolute;height:100%;background:#3a3020;border-radius:4px}
+#head{position:absolute;top:-3px;width:3px;height:14px;background:#e0455a;border-radius:2px}
+#side{position:fixed;top:74px;right:0;bottom:0;width:310px;background:rgba(12,10,8,.9);padding:12px 16px;overflow-y:auto;font-size:12.5px;line-height:1.5;z-index:2}
 #side h2{font-size:13px;color:#b9a2d6;margin:12px 0 3px} #side ul{margin:0;padding-left:16px}
-#side .small{color:#8d8065} #side a{color:#b9a2d6}
+.small{color:#8d8065;font-size:12px} #side a{color:#b9a2d6}
 #chron li{color:#a8b6a0}
-#hint{position:fixed;bottom:10px;left:14px;color:#8d8065;font-size:12px;z-index:2}
+#now{color:#e8dcbc} .behind{color:#d0a24a}
 </style></head><body>
 <canvas id="map"></canvas>
-<div id="hud"><b>CHRONICA</b><span id="date"></span><span class="live"> LIVE</span><span id="pop"></span><span style="margin-left:auto"><a href="/download/current" download style="color:#e8dcbc;text-decoration:none;border:1px solid #5a4a3a;padding:3px 9px;border-radius:4px">⬇ Download this world</a></span>
-<span class="small">scroll=zoom · drag=pan · <a href="/classic" style="color:#8d8065">classic</a></span></div>
+<div id="hud">
+<b>CHRONICA</b>
+<span class="btn" id="pp">❚❚</span>
+<span class="btn spd" data-s="2">2</span><span class="btn spd" data-s="10">10</span>
+<span class="btn spd" data-s="30">30</span><span class="btn spd" data-s="90">90</span>
+<span class="btn spd" data-s="360">1yr/s</span>
+<span class="btn" id="livebtn">⏭ LIVE</span>
+<div id="scrub"><div id="buf"></div><div id="head"></div></div>
+<span id="watch" class="small"></span>
+<a class="dl" href="/download/current" download>⬇ world</a>
+</div>
 <div id="side"></div>
-<div id="hint">the world persists whether or not this page is open</div>
 <script>
 const cv=document.getElementById('map'),ctx=cv.getContext('2d');
-let S=null,cells=null;
+let F=null,M=null,cells=null;
 let cam={x:96,y:64,z:7};
+// DVR playback state
+let mode='live';           // 'live' | 'play'
+let dps=30;                // playback days-per-second when playing
+let playDay=0, oldest=0, live=0;
+let shownDay=-1, fetching=false, lastFetch=0;
 const PAL={0:['#101c38',null],1:['#0a1226',null],2:['#5a7896','═'],3:['#78280a','^'],4:['#182c58','≈'],5:['#1a2e5a','~'],6:['#969caa','∙'],7:['#46424e','▲'],8:['#343039','▒'],9:['#3c2c14','≡'],10:['#342c22','∙'],11:['#242220','"'],12:['#1a2618','♠'],13:['#18221c','↑'],14:['#1e261a','τ'],15:['#142822','"'],16:['#242416','*'],17:['#1c2818','"'],18:['#1e2618',','],19:['#262016','.']};
 const FG={2:'#c8e1f5',3:'#ffaa3c',4:'#73a5eb',5:'#82b9f0',6:'#f4f6fc',7:'#f0f0f5',8:'#968aa0',9:'#e1c350',10:'#aa9678',11:'#69645f',12:'#73aa50',13:'#69875a',14:'#78965f',15:'#3c7850',16:'#8c915a',17:'#7da550',18:'#6e9655',19:'#695a41'};
-const SEASONCOL={9:{0:'#96783c',1:'#bebe46',2:'#e6c350',3:'#8c7d5f'}};
 const AL=['h','d','b','w','B','m','h','c','f'];
 const AC=['#d2be96','#c8a06e','#966e50','#eb5a5a','#e66e3c','#e6e1d2','#be9664','#aa825a','#82b9d7'];
 const CUL=['#ffe878','#78dcff','#ff96dc','#a0ffa0','#ffb478'];
@@ -72,61 +88,85 @@ addEventListener('mouseup',()=>{drag=null;cv.style.cursor='grab'});
 addEventListener('mousemove',e=>{if(drag){cam.x-=(e.clientX-drag[0])/cam.z;cam.y-=(e.clientY-drag[1])/cam.z;drag=[e.clientX,e.clientY]}});
 cv.addEventListener('touchstart',e=>{if(e.touches.length==1)drag=[e.touches[0].clientX,e.touches[0].clientY]},{passive:true});
 cv.addEventListener('touchmove',e=>{if(drag&&e.touches.length==1){const t=e.touches[0];cam.x-=(t.clientX-drag[0])/cam.z;cam.y-=(t.clientY-drag[1])/cam.z;drag=[t.clientX,t.clientY]}},{passive:true});
-async function poll(){try{const r=await fetch('/state.json',{cache:'no-store'});S=await r.json();
- const bin=atob(S.cells);cells=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)cells[i]=bin.charCodeAt(i);
- document.getElementById('date').textContent=S.date;
- document.getElementById('pop').textContent='· people '+S.stats.people+' · events '+S.stats.events;
- side();}catch(e){}setTimeout(poll,5000)}
-function side(){const sd=document.getElementById('side');let h='';
- h+='<h2>The living</h2><ul><li><b>People: '+S.stats.people+'</b></li>';
- for(const s of S.stats.species)if(s.c>0)h+='<li>'+s.n+': '+s.c+'</li>';
- h+='<li>Plants: '+S.stats.plants+' ('+S.stats.trees+' trees, '+Math.round(S.stats.cover*100)+'% forest)</li></ul>';
- const ex=S.stats.species.filter(s=>s.c==0).map(s=>s.n);
- if(ex.length)h+='<div class="small">gone from the world: '+ex.join(', ')+'</div>';
- h+='<h2>Settlements</h2><ul>'+(S.setts.length?S.setts.map(s=>'<li>'+s.n+' ('+s.x+','+s.y+')</li>').join(''):'<li class="small">none yet bears a name</li>')+'</ul>';
- const fs=S.faiths.filter(f=>f.c>0),fg=S.faiths.length-fs.length;
- h+='<h2>Faiths</h2><ul>'+fs.map(f=>'<li>'+f.n+': '+f.c+' faithful</li>').join('')+(fg?'<li class="small">…and '+fg+' whose last believer is gone</li>':'')+'</ul>';
- h+='<h2>The chronicle</h2><ul id="chron">'+S.chron.map(c=>'<li>'+c+'</li>').join('')+'</ul>';
- if(S.past.length){h+='<h2>Worlds that were <span class="small">('+S.past.length+')</span></h2><ul>'+S.past.map(p=>'<li>World '+p.no+' · ended yr '+p.year+' · '+p.events+' events<br><a href="/archive/'+p.base+'.png">portrait</a> · <a href="/archive/'+p.base+'.html">final page</a> · <a href="/archive/'+p.base+'.crn" download>⬇ save+history</a></li>').join('')+'</ul>'}
- sd.innerHTML=h}
-function draw(){requestAnimationFrame(draw);if(!S||!cells)return;
+// controls
+document.getElementById('pp').onclick=()=>{mode=(mode==='pause')?'play':'pause';syncbtn()};
+document.getElementById('livebtn').onclick=()=>{mode='live';syncbtn()};
+document.querySelectorAll('.spd').forEach(b=>b.onclick=()=>{dps=+b.dataset.s;mode='play';if(playDay<oldest)playDay=oldest;syncbtn()});
+document.getElementById('scrub').onclick=e=>{const r=e.currentTarget.getBoundingClientRect();
+ const f=(e.clientX-r.left)/r.width;playDay=oldest+f*(live-oldest);mode='play';syncbtn()};
+function syncbtn(){document.getElementById('pp').textContent=mode==='pause'?'▶':'❚❚';
+ document.getElementById('livebtn').classList.toggle('on',mode==='live');
+ document.querySelectorAll('.spd').forEach(b=>b.classList.toggle('on',mode==='play'&&+b.dataset.s===dps));}
+async function pollMeta(){try{const r=await fetch('/live.json',{cache:'no-store'});M=await r.json();
+ oldest=M.oldestDay;live=M.liveDay;if(mode==='live'||playDay>live)playDay=live;if(playDay<oldest)playDay=oldest;
+ sidebar();}catch(e){}setTimeout(pollMeta,2000)}
+async function fetchFrame(day){if(fetching)return;const now=performance.now();if(now-lastFetch<70)return;
+ fetching=true;lastFetch=now;
+ try{const r=await fetch('/frame?day='+Math.round(day),{cache:'no-store'});const f=await r.json();
+  if(f&&f.cells){F=f;const bin=atob(f.cells);cells=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)cells[i]=bin.charCodeAt(i);shownDay=f.day}}catch(e){}
+ fetching=false}
+let prevT=performance.now();
+function loop(t){requestAnimationFrame(loop);const dt=(t-prevT)/1000;prevT=t;
+ if(mode==='live'){playDay=live}
+ else if(mode==='play'){playDay+=dps*dt;if(playDay>=live){playDay=live;mode='live';syncbtn()}if(playDay<oldest)playDay=oldest}
+ // fetch the frame nearest the play head when it moves off the shown one
+ if(Math.abs(playDay-shownDay)>=2)fetchFrame(playDay);
+ draw();hud();}
+function hud(){const w=document.getElementById('watch');if(!M)return;
+ const wy=Math.floor(playDay/360),ly=Math.floor(live/360),beh=ly-wy;
+ const bufpct=live>oldest?((playDay-oldest)/(live-oldest)*100):100;
+ document.getElementById('buf').style.width='100%';
+ document.getElementById('head').style.left=bufpct+'%';
+ w.innerHTML='watching <span id="now">Year '+wy+'</span> · live Year '+ly+(beh>0?' <span class="behind">(−'+beh+'y)</span>':' <span class="on" style="color:#e0455a">●LIVE</span>');}
+function draw(){if(!F||!cells)return;
  ctx.fillStyle='#0c0a08';ctx.fillRect(0,0,cv.width,cv.height);
- const z=cam.z,W=S.w,H=S.h,ascii=z>=12;
+ const z=cam.z,W=F.w,H=F.h,ascii=z>=12;
  const x0=Math.max(0,Math.floor(cam.x-cv.width/2/z)-1),x1=Math.min(W-1,Math.ceil(cam.x+cv.width/2/z)+1);
  const y0=Math.max(0,Math.floor(cam.y-cv.height/2/z)-1),y1=Math.min(H-1,Math.ceil(cam.y+cv.height/2/z)+1);
- const season=Math.floor(S.day%360/90);
+ const season=Math.floor((F.day%360)/90);
  for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const b=cells[y*W+x],c=b&63;
   const[sx,sy]=w2s(x,y);const p=PAL[c]||PAL[19];
   ctx.fillStyle=p[0];ctx.fillRect(sx,sy,z+1,z+1);
-  if(ascii&&p[1]){ctx.fillStyle=(c==9&&SEASONCOL[9][season])||FG[c]||'#888';
-   ctx.font=Math.round(z*0.9)+'px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
-   ctx.fillText(p[1],sx+z/2,sy+z/2);}}
- for(const b of S.buildings){if(b.x<x0||b.x>x1||b.y<y0||b.y>y1)continue;const[sx,sy]=w2s(b.x,b.y);
-  const g=!b.r?['□','#828282']:b.p<100?['□','#c8aa6e']:[['⌂','#d2a05a'],['▦','#e6c878'],['†','#d2be a0'],['#','#be a578']][b.k]||['⌂','#d2a05a'];
-  if(ascii){ctx.fillStyle=g[1].replace(/ /g,'');ctx.font=Math.round(z*0.9)+'px monospace';ctx.fillText(g[0],sx+z/2,sy+z/2);
+  if(ascii&&p[1]){ctx.fillStyle=(c==9&&[['#96783c','#bebe46','#e6c350','#8c7d5f'][season]])||FG[c]||'#888';
+   ctx.font=Math.round(z*0.9)+'px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(p[1],sx+z/2,sy+z/2);}}
+ for(const b of F.buildings){if(b.x<x0||b.x>x1||b.y<y0||b.y>y1)continue;const[sx,sy]=w2s(b.x,b.y);
+  const g=!b.r?['□','#828282']:b.p<100?['□','#c8aa6e']:[['⌂','#d2a05a'],['▦','#e6c878'],['†','#d2bea0'],['#','#bea578']][b.k]||['⌂','#d2a05a'];
+  if(ascii){ctx.fillStyle=g[1];ctx.font=Math.round(z*0.9)+'px monospace';ctx.fillText(g[0],sx+z/2,sy+z/2);
    if(z>=14&&b.s>0){ctx.fillStyle='#ffe8b4';ctx.font=Math.round(z*0.38)+'px monospace';ctx.fillText(b.s,sx+z/2,sy+z*1.1)}}
   else{ctx.fillStyle='#a87c46';ctx.fillRect(sx+z*0.1,sy+z*0.1,z*0.8,z*0.8)}}
- for(const a of S.animals){if(a.x<x0||a.x>x1||a.y<y0||a.y>y1)continue;const[sx,sy]=w2s(a.x,a.y);
+ for(const a of F.animals){if(a.x<x0||a.x>x1||a.y<y0||a.y>y1)continue;const[sx,sy]=w2s(a.x,a.y);
   if(ascii){ctx.fillStyle=AC[a.s]||'#ccc';ctx.font=Math.round(z*0.9)+'px monospace';ctx.fillText(AL[a.s]||'?',sx+z/2,sy+z/2);
    if(z>=22){ctx.fillStyle='rgba(255,255,255,.75)';ctx.font=Math.round(z*0.3)+'px Georgia';ctx.fillText(a.a,sx+z/2,sy-z*0.15)}}
   else{ctx.fillStyle=(a.s==3||a.s==4)?'#e15050':'#cdaf84';ctx.beginPath();ctx.arc(sx+z/2,sy+z/2,Math.max(1.4,z*0.28),0,7);ctx.fill()}}
- for(const p of S.people){if(p.x<x0||p.x>x1||p.y<y0||p.y>y1)continue;const[sx,sy]=w2s(p.x,p.y);
+ for(const p of F.people){if(p.x<x0||p.x>x1||p.y<y0||p.y>y1)continue;const[sx,sy]=w2s(p.x,p.y);
   if(ascii){ctx.fillStyle=CUL[p.c%5];ctx.font=Math.round(z*0.9)+'px monospace';ctx.fillText(p.k?'•':'☺',sx+z/2,sy+z/2);
    if(z>=20){ctx.fillStyle='#fff';ctx.font=Math.round(z*0.34)+'px Georgia';ctx.fillText(p.n+' — '+p.a,sx+z/2,sy-z*0.2)}}
   else{ctx.fillStyle='#fcf06e';ctx.beginPath();ctx.arc(sx+z/2,sy+z/2,Math.max(1.8,z*0.34),0,7);ctx.fill()}}
- for(const m of S.marks){if(m.x<x0||m.x>x1||m.y<y0||m.y>y1)continue;const[sx,sy]=w2s(m.x,m.y);
-  ctx.fillStyle=MC[m.t];ctx.font=Math.max(10,z*0.7)+'px monospace';ctx.fillText(MK[m.t],sx+z*0.8,sy+z*0.2)}
- ctx.textAlign='center';
- for(const st of S.setts){const[sx,sy]=w2s(st.x,st.y-2);ctx.fillStyle='#fff';ctx.font='13px Georgia';ctx.fillText(st.n,sx,sy)}
+ for(const m of F.marks){if(m.x<x0||m.x>x1||m.y<y0||m.y>y1)continue;const[sx,sy]=w2s(m.x,m.y);
+  ctx.fillStyle=MC[m.t];ctx.font=Math.max(10,z*0.7)+'px monospace';ctx.textAlign='center';ctx.fillText(MK[m.t],sx+z*0.8,sy+z*0.2)}
+ ctx.textAlign='center';for(const st of F.setts){const[sx,sy]=w2s(st.x,st.y-2);ctx.fillStyle='#fff';ctx.font='13px Georgia';ctx.fillText(st.n,sx,sy)}
 }
-poll();draw();
+function sidebar(){if(!M)return;const sd=document.getElementById('side');let h='';
+ h+='<div class="small">the world lives at full speed; you watch at yours</div>';
+ h+='<h2>The world now — '+M.date+'</h2><ul><li><b>People: '+M.stats.people+'</b></li>';
+ for(const s of M.stats.species)if(s.c>0)h+='<li>'+s.n+': '+s.c+'</li>';
+ h+='<li>Plants: '+M.stats.plants+' ('+M.stats.trees+' trees, '+Math.round(M.stats.cover*100)+'% forest)</li></ul>';
+ const ex=M.stats.species.filter(s=>s.c==0).map(s=>s.n);
+ if(ex.length)h+='<div class="small">gone: '+ex.join(', ')+'</div>';
+ const fs=M.faiths.filter(f=>f.c>0),fg=M.faiths.length-fs.length;
+ h+='<h2>Faiths</h2><ul>'+fs.map(f=>'<li>'+f.n+': '+f.c+'</li>').join('')+(fg?'<li class="small">…and '+fg+' whose last believer is gone</li>':'')+'</ul>';
+ h+='<h2>The chronicle</h2><ul id="chron">'+M.chron.map(c=>'<li>'+c+'</li>').join('')+'</ul>';
+ h+='<div class="small">events since this world began: '+M.stats.events+'</div>';
+ if(M.past.length){h+='<h2>Worlds that were</h2><ul>'+M.past.map(p=>'<li>World '+p.no+' · yr '+p.year+' · '+p.events+' events<br><a href="/archive/'+p.base+'.png">portrait</a> · <a href="/archive/'+p.base+'.crn" download>⬇ save</a></li>').join('')+'</ul>'}
+ sd.innerHTML=h}
+syncbtn();pollMeta();requestAnimationFrame(loop);
 </script></body></html>"##;
 
 fn main() {
     let mut seed = 1u64;
     let mut port = 80u16;
     let mut save = String::from("/var/lib/chronica/world.crn");
-    let mut days_per_min = 30u64; // ~43 sim-years per real year: a decade of watching ≈ 430 years
+    let mut days_per_min = 0u64; // 0 = as fast as the engine runs; the DVR decouples watching
     let mut width = 192u32;
     let mut height = 128u32;
     let mut it = std::env::args().skip(1);
@@ -175,11 +215,20 @@ fn main() {
     // the current world's full binary (save + entire event history), refreshed each autosave
     let save_bytes: Arc<RwLock<Vec<u8>>> = Arc::new(RwLock::new(sim.to_bytes()));
     let cur_seed: Arc<RwLock<u64>> = Arc::new(RwLock::new(sim.cfg.seed));
+    // the DVR: a rolling buffer of world-frames the client can replay at its own pace
+    use std::collections::VecDeque;
+    const FRAME_STRIDE: u64 = 2; // capture a frame every N sim-days
+    const MAX_FRAMES: usize = 2400; // ~4800 sim-days of rewind (~13 years)
+    let frames: Arc<RwLock<VecDeque<(u64, String)>>> = Arc::new(RwLock::new(VecDeque::new()));
+    frames.write().unwrap().push_back((sim.clock.day, render_frame(&sim)));
+    let meta: Arc<RwLock<String>> = Arc::new(RwLock::new(render_meta(&sim, sim.clock.day, sim.clock.day)));
 
     // ---- HTTP server thread ----
     let server_view = Arc::clone(&view);
     let server_save = Arc::clone(&save_bytes);
     let server_seed = Arc::clone(&cur_seed);
+    let server_frames = Arc::clone(&frames);
+    let server_meta = Arc::clone(&meta);
     std::thread::spawn(move || {
         let server = tiny_http::Server::http(("0.0.0.0", port)).expect("bind http");
         eprintln!("serving on port {port}");
@@ -236,14 +285,31 @@ fn main() {
                         )
                         .unwrap(),
                     )
-            } else if url.starts_with("/state.json") {
-                tiny_http::Response::from_data(v.state.clone().into_bytes()).with_header(
-                    tiny_http::Header::from_bytes(
-                        &b"Content-Type"[..],
-                        &b"application/json"[..],
-                    )
-                    .unwrap(),
+            } else if url.starts_with("/frame") {
+                // the nearest recorded frame to ?day=D (default: newest)
+                let want: Option<u64> = url
+                    .split_once("day=")
+                    .and_then(|(_, r)| r.split(|c: char| !c.is_ascii_digit()).next())
+                    .and_then(|d| d.parse().ok());
+                let fr = server_frames.read().unwrap();
+                let body = if let Some(d) = want {
+                    fr.iter()
+                        .min_by_key(|(fd, _)| (*fd as i64 - d as i64).abs())
+                        .map(|(_, j)| j.clone())
+                } else {
+                    fr.back().map(|(_, j)| j.clone())
+                }
+                .unwrap_or_else(|| "{}".to_string());
+                tiny_http::Response::from_data(body.into_bytes()).with_header(
+                    tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                        .unwrap(),
                 )
+            } else if url.starts_with("/live.json") {
+                tiny_http::Response::from_data(server_meta.read().unwrap().clone().into_bytes())
+                    .with_header(
+                        tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                            .unwrap(),
+                    )
             } else if url.starts_with("/classic") {
                 tiny_http::Response::from_data(v.html.clone().into_bytes()).with_header(
                     tiny_http::Header::from_bytes(
@@ -271,14 +337,35 @@ fn main() {
     });
 
     // ---- the worlds, forever: each runs until a century after its last creature ----
-    let tick_sleep = std::time::Duration::from_millis(60_000 / days_per_min.max(1));
-    let mut since_render = 0u64;
-    let mut since_save = 0u64;
+    // days_per_min == 0 → run as fast as the engine can; the DVR decouples watching from living
+    let tick_sleep = if days_per_min == 0 {
+        std::time::Duration::ZERO
+    } else {
+        std::time::Duration::from_millis(60_000 / days_per_min.max(1))
+    };
+    let mut last_frame_day = sim.clock.day;
+    let mut last_save = std::time::Instant::now();
+    let mut last_meta = std::time::Instant::now();
     loop {
         let t0 = std::time::Instant::now();
         sim.tick();
-        since_render += 1;
-        since_save += 1;
+
+        // capture a frame into the DVR buffer every few sim-days
+        if sim.clock.day.saturating_sub(last_frame_day) >= FRAME_STRIDE {
+            last_frame_day = sim.clock.day;
+            let f = render_frame(&sim);
+            let mut fr = frames.write().unwrap();
+            fr.push_back((sim.clock.day, f));
+            while fr.len() > MAX_FRAMES {
+                fr.pop_front();
+            }
+        }
+        // refresh the live sidebar a few times a second (real time), not per sim-tick
+        if last_meta.elapsed() >= std::time::Duration::from_millis(500) {
+            last_meta = std::time::Instant::now();
+            let oldest = frames.read().unwrap().front().map(|(d, _)| *d).unwrap_or(sim.clock.day);
+            *meta.write().unwrap() = render_meta(&sim, oldest, sim.clock.day);
+        }
 
         // watch for the death of the last creature (plants alone don't count)
         let creatures = chronica_engine::humans::population(&sim)
@@ -326,20 +413,21 @@ fn main() {
             eprintln!("world {} begins (seed {s})", epoch + 1);
             sim = Sim::new(Config { seed: s, width, height });
             doomsday = u64::MAX;
-            since_save = 0;
             *save_bytes.write().unwrap() = sim.to_bytes();
             *cur_seed.write().unwrap() = sim.cfg.seed;
+            {
+                let mut fr = frames.write().unwrap();
+                fr.clear();
+                fr.push_back((sim.clock.day, render_frame(&sim)));
+            }
+            last_frame_day = sim.clock.day;
+            *meta.write().unwrap() = render_meta(&sim, sim.clock.day, sim.clock.day);
             *view.write().unwrap() = render_view(&sim);
             continue;
         }
-        if since_render >= 3 {
-            since_render = 0;
-            let new_view = render_view(&sim);
-            *view.write().unwrap() = new_view;
-        }
-        if since_save >= 60 {
-            since_save = 0;
-            // alternate files so a crash mid-write can never eat the world
+        // autosave by real time (the sim may be doing thousands of days a second)
+        if last_save.elapsed() >= std::time::Duration::from_secs(20) {
+            last_save = std::time::Instant::now();
             let tmp = save_path.with_extension("crn.tmp");
             if persistence::save_to_file(&sim, &tmp).is_ok() {
                 let _ = std::fs::rename(&tmp, &save_path);
@@ -347,15 +435,17 @@ fn main() {
                 eprintln!("[{}] autosaved", sim.clock.date_string());
             }
         }
-        let spent = t0.elapsed();
-        if spent < tick_sleep {
-            std::thread::sleep(tick_sleep - spent);
+        if tick_sleep > std::time::Duration::ZERO {
+            let spent = t0.elapsed();
+            if spent < tick_sleep {
+                std::thread::sleep(tick_sleep - spent);
+            }
         }
     }
 }
 
 fn render_view(sim: &Sim) -> View {
-    View { png: render_png(sim), html: render_html(sim), state: render_state(sim) }
+    View { png: render_png(sim), html: render_html(sim), state: String::new() }
 }
 
 /// One cell, classified for the client renderer (mirror of the desktop glyph logic).
@@ -434,7 +524,7 @@ fn classify_cell(sim: &Sim, i: usize) -> (u8, u8) {
     (19, shade)
 }
 
-fn render_state(sim: &Sim) -> String {
+fn render_frame(sim: &Sim) -> String {
     use base64::Engine as _;
     use chronica_engine::core::ids::EntityRef as ER;
     use chronica_engine::history::EventKind as EK;
@@ -581,11 +671,64 @@ fn render_state(sim: &Sim) -> String {
         "w": g.w, "h": g.h, "day": day, "date": sim.clock.date_string(),
         "cells": cells_b64,
         "people": people, "animals": animals, "buildings": buildings,
-        "setts": setts, "marks": marks, "chron": chron,
+        "setts": setts, "marks": marks
+    })
+    .to_string()
+}
+
+/// The live sidebar + DVR buffer range: what the world is *now*, plus how far back you can rewind.
+fn render_meta(sim: &Sim, oldest: u64, newest: u64) -> String {
+    use chronica_engine::core::ids::EntityRef as ER;
+    use chronica_engine::history::EventKind as EK;
+    let notable = |ev: &chronica_engine::history::Event| -> bool {
+        let human = matches!(ev.subject, ER::Person(_));
+        match &ev.kind {
+            EK::PlantDied { .. } => false,
+            EK::Born { .. } | EK::Died { .. } | EK::Mated { .. } | EK::Ate { .. } => human,
+            EK::Killed { by } => human || matches!(by, ER::Person(_)),
+            EK::LightningStrike | EK::FireDied => false,
+            _ => true,
+        }
+    };
+    let mut chron = Vec::new();
+    for ev in sim.history.events.iter().rev() {
+        if notable(ev) {
+            chron.push(inspection::describe(sim, ev));
+            if chron.len() >= 30 {
+                break;
+            }
+        }
+    }
+    let mut species_counts = Vec::new();
+    for (nm, c) in chronica_engine::animals::population_by_species(sim) {
+        species_counts.push(serde_json::json!({"n":nm,"c":c}));
+    }
+    let (live_plants, trees, cover) = chronica_engine::vegetation::forest_stats(sim);
+    let faiths: Vec<serde_json::Value> = chronica_engine::society::belief_clusters(sim)
+        .into_iter()
+        .map(|(nm, c)| serde_json::json!({"n":nm,"c":c}))
+        .collect();
+    let past: Vec<serde_json::Value> = std::fs::read_to_string("/var/lib/chronica/worlds.log")
+        .unwrap_or_default()
+        .lines()
+        .rev()
+        .take(50)
+        .filter_map(|l| {
+            let p: Vec<&str> = l.split('\t').collect();
+            if p.len() >= 5 {
+                Some(serde_json::json!({"no":p[0],"seed":p[1],"year":p[2],"events":p[3],"base":p[4]}))
+            } else {
+                None
+            }
+        })
+        .collect();
+    serde_json::json!({
+        "date": sim.clock.date_string(), "liveDay": sim.clock.day,
+        "oldestDay": oldest, "newestDay": newest,
         "stats": {"people": chronica_engine::humans::population(sim),
                    "species": species_counts, "plants": live_plants,
                    "trees": trees, "cover": cover, "events": sim.history.events.len()},
-        "faiths": faiths, "past": past
+        "faiths": faiths, "past": past, "chron": chron
     })
     .to_string()
 }
