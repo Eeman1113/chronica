@@ -122,6 +122,14 @@ Year 3: a hare died of hunger
 
 ## Run it
 
+**One line — clone, build, and open the world** (needs [Rust](https://rustup.rs) 1.88+):
+
+```sh
+git clone https://github.com/Eeman1113/chronica.git && cd chronica && cargo run --release -p chronica-renderer
+```
+
+First build takes a few minutes; then the window opens on a fresh world. Everything else:
+
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"   # rustup toolchain (needs rustc 1.88+)
 
