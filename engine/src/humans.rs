@@ -91,6 +91,7 @@ pub struct HumanRationale {
     pub farm: f32,
     pub preserve: f32,
     pub fish: f32,
+    pub bait: f32,
     pub chosen: u8,
 }
 
@@ -111,6 +112,8 @@ pub enum HumanAction {
     TendFarm,                  // farming technique: plant/tend wheat on this cell
     PreserveFood,              // smoke/dry the fresh stores over the hearth
     Fish { target: u32 },      // catch a trout from the water's edge
+    StakeBait,                 // set a corpse to lure the beast you hunt
+    LieInWait,                 // watch the bait, and strike when the beast feeds
     Idle,
 }
 
@@ -171,6 +174,7 @@ pub struct Human {
     /// Seasonal hunger, remembered: EMA of hungry days per season — the raw material of foresight.
     pub season_hunger: [f32; 4],
     pub vengeance: Option<crate::core::ids::AnimalId>, // the beast that took your kin
+    pub staked_bait: Option<u32>, // a bait corpse this hunter set and now watches
     pub days_starving: u16,
     pub days_thirsty: u16,
     pub rng: Rng,
@@ -280,6 +284,7 @@ impl Humans {
             known_spots: Vec::new(),
             season_hunger: [0.0; 4],
             vengeance: None,
+            staked_bait: None,
             days_starving: 0,
             days_thirsty: 0,
             rng,
@@ -620,8 +625,23 @@ fn decide(sim: &Sim, hi: usize, p: &HumanPercepts) -> (HumanAction, HumanRationa
             let b = &sim.animals.list[bi];
             if b.alive && (b.x - h.x).abs().max((b.y - h.y).abs()) <= 9 {
                 r.hunt = r.hunt.max(2.2 + h.traits[1]);
-            } else if !b.alive {
-                // the debt is paid or the beast is gone
+            }
+        }
+    }
+    // the patient revenge: watch a bait already set, or set one from surplus meat
+    if adult && h.vengeance.is_some() {
+        if h.staked_bait.is_some() {
+            r.bait = 2.4 + h.traits[1] * 0.5; // hold the ambush
+        } else {
+            // stake bait only if the storehouse can spare meat and courage allows
+            let has_surplus = h
+                .home
+                .some()
+                .map(|b| sim.objects.buildings[b.index()].food_store > 3.0)
+                .unwrap_or(false)
+                || h.carried_food > 3.0;
+            if has_surplus && h.traits[1] > 0.5 {
+                r.bait = 1.6 + h.traits[0] * 0.4;
             }
         }
     }
@@ -714,6 +734,7 @@ fn decide(sim: &Sim, hi: usize, p: &HumanPercepts) -> (HumanAction, HumanRationa
         (r.farm, 7),
         (r.preserve, 9),
         (r.fish, 10),
+        (r.bait, 11),
         (r.rest, 8),
     ];
     let mut best = (0.2f32, 9u8); // idle threshold
@@ -831,6 +852,13 @@ fn decide(sim: &Sim, hi: usize, p: &HumanPercepts) -> (HumanAction, HumanRationa
         7 => HumanAction::TendFarm,
         9 => HumanAction::PreserveFood,
         10 => HumanAction::Fish { target: p.fish.unwrap() },
+        11 => {
+            if h.staked_bait.is_some() {
+                HumanAction::LieInWait
+            } else {
+                HumanAction::StakeBait
+            }
+        }
         8 => HumanAction::Rest,
         _ => {
             // idle: drift home or deposit surplus
@@ -2554,6 +2582,12 @@ fn apply_action(
         HumanAction::Fish { target } => {
             fish_from_bank(sim, hi, target as usize);
         }
+        HumanAction::StakeBait => {
+            stake_bait(sim, hi);
+        }
+        HumanAction::LieInWait => {
+            lie_in_wait(sim, hi);
+        }
         HumanAction::PreserveFood => {
             let Some(b) = sim.humans.list[hi].home.some() else { return };
             let bi = b.index();
@@ -3156,6 +3190,183 @@ fn fish_from_bank(sim: &mut Sim, hi: usize, ai: usize) {
             h.hunger = (h.hunger - bite).max(0.0);
         }
         crate::humans::remember_spot(h, 0, fx, fy, day); // a good fishing spot is remembered
+    }
+}
+
+/// Stake bait: take real meat from the store, carry it to the ground where the beast was last
+/// remembered striking (or near camp), and lay it as a corpse the predator will come to feed on.
+fn stake_bait(sim: &mut Sim, hi: usize) {
+    let day = sim.clock.day;
+    let Some(beast) = sim.humans.list[hi].vengeance else { return };
+    // draw the meat: from home store first, else what you carry
+    let have_meat = {
+        let h = &sim.humans.list[hi];
+        h.home
+            .some()
+            .map(|b| sim.objects.buildings[b.index()].food_store > 3.0)
+            .unwrap_or(false)
+            || h.carried_food > 3.0
+    };
+    if !have_meat {
+        return;
+    }
+    // where: the hunter's remembered danger spot, else their camp edge
+    let (site, camp) = {
+        let h = &sim.humans.list[hi];
+        let danger = h
+            .known_spots
+            .iter()
+            .find(|(k, _, _, _)| *k == 2)
+            .map(|(_, x, y, _)| (*x, *y));
+        (danger.unwrap_or(h.camp), h.camp)
+    };
+    let _ = camp;
+    // walk to the ambush ground and lay the bait there
+    let at_site = {
+        let h = &sim.humans.list[hi];
+        (h.x - site.0).abs().max((h.y - site.1).abs()) <= 1
+    };
+    if !at_site {
+        move_toward_h(sim, hi, site, 2);
+        return;
+    }
+    let cell = match sim.grid.idx(site.0, site.1) {
+        Some(c) if !sim.grid.ocean[c] && sim.grid.surface[c] <= 0.12 => c,
+        _ => return,
+    };
+    // spend the meat
+    {
+        let h = &sim.humans.list[hi];
+        if let Some(b) = h.home.some() {
+            sim.objects.buildings[b.index()].food_store -= 3.0;
+        } else {
+            sim.humans.list[hi].carried_food -= 3.0;
+        }
+    }
+    let ci = sim.animals.corpses.len() as u32;
+    let quarry_sp = sim
+        .animals
+        .list
+        .get(beast.index())
+        .map(|a| a.species)
+        .unwrap_or(0);
+    sim.animals.corpses.push(crate::animals::Corpse {
+        species: quarry_sp,
+        cell: cell as u32,
+        day,
+        mass: 8.0,
+        of_animal: crate::core::ids::AnimalId::NONE,
+        bait: true,
+        staker: Humans::id_of(hi),
+        rot: 0.0,
+        gone: false,
+    });
+    sim.humans.list[hi].staked_bait = Some(ci);
+    sim.history.push(
+        day,
+        EntityRef::Person(Humans::id_of(hi)),
+        EventKind::HuntStaked { against: EntityRef::Animal(beast) },
+        Some(cell as u32),
+        vec![],
+    );
+}
+
+/// Lie in wait by the bait; when a predator comes to feed, strike from concealment.
+fn lie_in_wait(sim: &mut Sim, hi: usize) {
+    let day = sim.clock.day;
+    let Some(ci) = sim.humans.list[hi].staked_bait else { return };
+    let ci = ci as usize;
+    // the bait is gone (rotted or fully eaten): the vigil ends
+    let bait_ok = sim.animals.corpses.get(ci).map(|c| !c.gone && c.bait).unwrap_or(false);
+    if !bait_ok {
+        sim.humans.list[hi].staked_bait = None;
+        return;
+    }
+    let (bx, by) = {
+        let c = &sim.animals.corpses[ci];
+        sim.grid.xy(c.cell as usize)
+    };
+    // stay hidden a step from the bait
+    let dist = {
+        let h = &sim.humans.list[hi];
+        (h.x - bx).abs().max((h.y - by).abs())
+    };
+    if dist > 1 {
+        move_toward_h(sim, hi, (bx, by), 2);
+        return;
+    }
+    // is a predator feeding at the bait right now?
+    let mut prey_on_bait: Option<usize> = None;
+    sim.animals.index.for_each_near(bx, by, 1, |aq| {
+        if prey_on_bait.is_some() {
+            return;
+        }
+        let a = &sim.animals.list[aq as usize];
+        if a.alive
+            && !crate::species::ANIMALS[a.species as usize].prey.is_empty()
+            && (a.x - bx).abs().max((a.y - by).abs()) <= 1
+        {
+            prey_on_bait = Some(aq as usize);
+        }
+    });
+    let Some(target) = prey_on_bait else {
+        // no beast yet — keep the watch (a little fatigue, no wandering off)
+        let h = &mut sim.humans.list[hi];
+        h.fatigue = (h.fatigue + 0.05).min(1.5);
+        return;
+    };
+    // the ambush: the prepared, concealed hunter strikes with the advantage of surprise
+    let is_quarry = sim.humans.list[hi].vengeance == Some(crate::animals::Animals::id_of(target));
+    let (p_kill, mauled_p) = {
+        let h = &sim.humans.list[hi];
+        let a = &sim.animals.list[target];
+        let asp = &crate::species::ANIMALS[a.species as usize];
+        let hunter = 30.0 * (0.7 + h.traits[1] * 0.6 + h.skills[SK_HUNT] * 0.9) * 1.6; // surprise
+        let beast = asp.mass * a.condition * 0.6;
+        ((hunter / (hunter + beast)).clamp(0.2, 0.92), (beast / (hunter + beast)) * 0.3)
+    };
+    let win = {
+        let h = &mut sim.humans.list[hi];
+        h.skills[SK_HUNT] = (h.skills[SK_HUNT] + 0.01).min(1.0);
+        h.rng.chance(p_kill)
+    };
+    let cell = sim.grid.idx(bx, by).map(|i| i as u32);
+    if win {
+        let tid = crate::animals::Animals::id_of(target);
+        let ev = sim.history.push(
+            day,
+            EntityRef::Animal(tid),
+            EventKind::PredatorSlain { predator: EntityRef::Animal(tid), at_bait: true },
+            cell,
+            vec![],
+        );
+        crate::animals::kill_animal(sim, target, DeathCause::Battle, vec![Cause::Event(ev)], true);
+        {
+            let h = &mut sim.humans.list[hi];
+            h.staked_bait = None;
+            if is_quarry {
+                h.vengeance = None; // the debt is paid
+            }
+            h.skills[SK_HUNT] = (h.skills[SK_HUNT] + 0.02).min(1.0);
+            h.carried_food = (h.carried_food + 2.0).min(7.0); // the kill is meat too
+        }
+        // free the bait corpse
+        if let Some(c) = sim.animals.corpses.get_mut(ci) {
+            c.gone = true;
+        }
+    } else {
+        // the beast turned on the hunter
+        let mauled = {
+            let h = &mut sim.humans.list[hi];
+            h.rng.chance(mauled_p)
+        };
+        if mauled {
+            kill_human(sim, hi, DeathCause::Predation, vec![]);
+        } else {
+            let h = &mut sim.humans.list[hi];
+            h.fear = (h.fear + 1.0).min(2.0);
+            h.staked_bait = None; // the vigil is broken
+        }
     }
 }
 

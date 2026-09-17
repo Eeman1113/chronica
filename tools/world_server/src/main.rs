@@ -438,6 +438,8 @@ fn render_frame(sim: &Sim) -> String {
                 chronica_engine::humans::HumanAction::TendFarm => "farming",
                 chronica_engine::humans::HumanAction::PreserveFood => "smoking food",
                 chronica_engine::humans::HumanAction::Fish { .. } => "fishing",
+                chronica_engine::humans::HumanAction::StakeBait => "setting bait",
+                chronica_engine::humans::HumanAction::LieInWait => "lying in wait",
                 chronica_engine::humans::HumanAction::Rest => "resting",
                 chronica_engine::humans::HumanAction::Flee { .. } => "fleeing!",
                 chronica_engine::humans::HumanAction::MoveTo { .. } => "walking",
@@ -481,6 +483,17 @@ fn render_frame(sim: &Sim) -> String {
             };
             serde_json::json!({"x":x,"y":y,"k":k,"p":(b.progress*100.0) as u32,
                 "r":b.exists,"s":(b.food_store+b.preserved_store) as u32})
+        })
+        .collect();
+    let corpses: Vec<serde_json::Value> = sim
+        .animals
+        .corpses
+        .iter()
+        .filter(|c| !c.gone)
+        .map(|c| {
+            let (x, y) = g.xy(c.cell as usize);
+            serde_json::json!({"x":x,"y":y,"s":c.species,
+                "g":chronica_engine::animals::corpse_stage(c.rot),"b":c.bait})
         })
         .collect();
     let setts: Vec<serde_json::Value> = chronica_engine::society::living_settlements(sim)
@@ -553,7 +566,7 @@ fn render_frame(sim: &Sim) -> String {
         "w": g.w, "h": g.h, "day": day, "date": sim.clock.date_string(),
         "cells": cells_b64,
         "people": people, "animals": animals, "buildings": buildings,
-        "setts": setts, "marks": marks
+        "setts": setts, "marks": marks, "corpses": corpses
     })
     .to_string()
 }

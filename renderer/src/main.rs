@@ -729,7 +729,8 @@ impl eframe::App for App {
                     if !visible(x, y) {
                         continue;
                     }
-                    let ch = match c.species {
+                    let stage = chronica_engine::animals::corpse_stage(c.rot);
+                    let base = match c.species {
                         chronica_engine::species::A_HARE => "r",
                         chronica_engine::species::A_DEER => "d",
                         chronica_engine::species::A_BOAR => "b",
@@ -739,8 +740,8 @@ impl eframe::App for App {
                         chronica_engine::species::A_HORSE => "h",
                         _ => "c",
                     };
-                    let rot = ((self.sim.clock.day - c.day) as f32 / 30.0).clamp(0.0, 1.0);
-                    let grey = (150.0 - rot * 90.0) as u8;
+                    let ch = if c.bait { "\u{03b2}" } else if stage >= 3 { "\u{2234}" } else { base };
+                    let grey = (150.0 - stage as f32 * 34.0) as u8;
                     let pos = to_screen(x as f32 + 0.5, y as f32 + 0.5);
                     painter.text(
                         pos,
@@ -749,14 +750,15 @@ impl eframe::App for App {
                         egui::FontId::monospace(self.zoom * 0.85),
                         egui::Color32::from_rgb(grey, grey, grey),
                     );
-                    // the strike through the carcass
-                    painter.line_segment(
-                        [
-                            pos + egui::vec2(-self.zoom * 0.3, 0.0),
-                            pos + egui::vec2(self.zoom * 0.3, 0.0),
-                        ],
-                        egui::Stroke::new(1.5, egui::Color32::from_rgb(grey, grey, grey)),
-                    );
+                    if !c.bait && stage < 3 {
+                        painter.line_segment(
+                            [
+                                pos + egui::vec2(-self.zoom * 0.3, 0.0),
+                                pos + egui::vec2(self.zoom * 0.3, 0.0),
+                            ],
+                            egui::Stroke::new(1.5, egui::Color32::from_rgb(grey, grey, grey)),
+                        );
+                    }
                 }
             }
             // ---------- people: ☺ villagers, • children ----------
@@ -803,6 +805,8 @@ impl eframe::App for App {
                         chronica_engine::humans::HumanAction::TendFarm => "farming",
                         chronica_engine::humans::HumanAction::PreserveFood => "smoking food",
                         chronica_engine::humans::HumanAction::Fish { .. } => "fishing",
+                        chronica_engine::humans::HumanAction::StakeBait => "setting bait",
+                        chronica_engine::humans::HumanAction::LieInWait => "lying in wait",
                         chronica_engine::humans::HumanAction::Rest => "resting",
                         chronica_engine::humans::HumanAction::Flee { .. } => "fleeing!",
                         chronica_engine::humans::HumanAction::MoveTo { .. } => "walking",

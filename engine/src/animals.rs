@@ -44,6 +44,7 @@ pub struct Animal {
     pub tame_prog: f32,
     pub days_starving: u16,
     pub days_thirsty: u16,
+    pub man_kills: u16,       // people this beast has taken — the road to a name
     pub rationale: Rationale, // last decision's recorded reasoning
     pub rng: Rng,
     pub alive: bool,
@@ -56,13 +57,24 @@ pub struct Corpse {
     pub day: u64,
     pub mass: f32,
     pub of_animal: AnimalId,
+    pub bait: bool,                       // staked by people to draw a predator
+    pub staker: crate::core::ids::PersonId,
+    pub rot: f32,                         // decay 0..1: fresh -> ripe -> rotten -> bones
     pub gone: bool,
+}
+
+/// A corpse's visible decay stage (prototype's fresh/ripe/rotten/bones), from its rot.
+#[inline]
+pub fn corpse_stage(rot: f32) -> u8 {
+    if rot < 0.15 { 0 } else if rot < 0.45 { 1 } else if rot < 0.82 { 2 } else { 3 }
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Animals {
     pub list: Vec<Animal>,
     pub corpses: Vec<Corpse>,
+    /// Man-eaters earn names: arena index -> the name a terrified people gave it.
+    pub names: std::collections::BTreeMap<u32, String>,
     #[serde(skip)]
     pub index: SpatialIndex,
 }
@@ -125,6 +137,7 @@ impl Animals {
             tame_prog: 0.0,
             days_starving: 0,
             days_thirsty: 0,
+            man_kills: 0,
             rationale: Rationale::default(),
             rng,
             alive: true,
@@ -792,26 +805,43 @@ pub fn tick(sim: &mut Sim) {
         );
     }
 
-    // corpses rot; rotten mass fertilizes the ground
-    for c in sim.animals.corpses.iter_mut() {
-        if c.gone {
-            continue;
+    // corpses decay by real weather: warmth quickens rot, deep cold nearly halts it; every
+    // stage returns a little of the flesh to the soil, and bones finally weather away
+    {
+        let mut fert: Vec<(usize, f32)> = Vec::new();
+        for c in sim.animals.corpses.iter_mut() {
+            if c.gone {
+                continue;
+            }
+            let t = sim.grid.temp[c.cell as usize];
+            let season_rate = if t < -2.0 {
+                0.006 // frozen: a body can last a whole winter
+            } else if t < 8.0 {
+                0.020
+            } else if t < 18.0 {
+                0.035
+            } else {
+                0.055 // summer heat: gone in a few weeks
+            };
+            let before = corpse_stage(c.rot);
+            c.rot = (c.rot + season_rate).min(1.2);
+            let after = corpse_stage(c.rot);
+            // each time it passes into a riper stage, some mass soaks into the ground
+            if after > before {
+                let give = (c.mass * 0.03).min(0.25);
+                fert.push((c.cell as usize, give));
+                c.mass = (c.mass - give).max(0.0);
+            }
+            if c.rot >= 1.2 || c.mass <= 0.2 {
+                fert.push((c.cell as usize, (c.mass * 0.05).min(0.3)));
+                c.gone = true;
+            }
         }
-        let rot = (day - c.day) as f32;
-        if rot > 30.0 || c.mass <= 0.5 {
-            c.gone = true;
+        for (cell, n) in fert {
+            sim.grid.soil_n[cell] = (sim.grid.soil_n[cell] + n).min(1.5);
         }
     }
     if day % 30 == 11 {
-        let mut fertilize: Vec<(usize, f32)> = Vec::new();
-        for c in &sim.animals.corpses {
-            if c.gone && c.mass > 0.0 {
-                fertilize.push((c.cell as usize, (c.mass * 0.002).min(0.3)));
-            }
-        }
-        for (cell, n) in fertilize {
-            sim.grid.soil_n[cell] = (sim.grid.soil_n[cell] + n).min(1.5);
-        }
         sim.animals.corpses.retain(|c| !c.gone);
     }
 }
@@ -1084,6 +1114,9 @@ fn hunt(sim: &mut Sim, ai: usize, ti: usize, deaths: &mut Vec<(usize, DeathCause
             day: sim.clock.day,
             mass: t_mass - eaten,
             of_animal: Animals::id_of(ti),
+            bait: false,
+            staker: crate::core::ids::PersonId::NONE,
+            rot: 0.0,
             gone: false,
         });
         sim.history.push(
@@ -1260,6 +1293,25 @@ fn hunt_human(sim: &mut Sim, ai: usize, hi: usize) {
             let asp = &ANIMALS[a.species as usize];
             a.hunger = (a.hunger - 60.0 / (asp.mass * 0.18)).max(0.0);
             a.condition = (a.condition + 0.05).min(1.0);
+            a.man_kills = a.man_kills.saturating_add(1);
+        }
+        // a beast that has taken more than one soul earns a name in frightened mouths
+        let (mk, sp_i) = {
+            let a = &sim.animals.list[ai];
+            (a.man_kills, a.species)
+        };
+        let arena = ai as u32;
+        if mk >= 2 && !sim.animals.names.contains_key(&arena) {
+            let mut rng = crate::core::rng::Rng::entity(sim.cfg.seed, "beast_names", arena as u64);
+            let nm = crate::humans::make_name(&mut rng, (sp_i % 3) as u8);
+            sim.animals.names.insert(arena, nm);
+            sim.history.push(
+                day,
+                EntityRef::Animal(beast_id),
+                EventKind::PredatorNamed { predator: EntityRef::Animal(beast_id) },
+                cell,
+                vec![Cause::Event(kill_ev)],
+            );
         }
         // witnesses will not forget the beast
         for oi in 0..sim.humans.list.len() {
@@ -1338,6 +1390,9 @@ pub fn kill_animal(
             day: sim.clock.day,
             mass: mass_left,
             of_animal: Animals::id_of(ai),
+            bait: false,
+            staker: crate::core::ids::PersonId::NONE,
+            rot: 0.0,
             gone: false,
         });
     }

@@ -93,6 +93,9 @@ pub enum EventKind {
     Conceived { with: EntityRef },
     Miscarried { cause: DeathCause },
     Stillbirth,
+    PredatorNamed { predator: EntityRef },
+    HuntStaked { against: EntityRef },
+    PredatorSlain { predator: EntityRef, at_bait: bool },
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]

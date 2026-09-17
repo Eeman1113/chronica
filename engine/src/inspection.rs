@@ -17,7 +17,11 @@ pub fn name_of(sim: &Sim, e: EntityRef) -> String {
             .list
             .get(a.index())
             .map(|x| {
-                format!("a {}", crate::species::ANIMALS[x.species as usize].name.to_lowercase())
+                let kind = crate::species::ANIMALS[x.species as usize].name.to_lowercase();
+                match sim.animals.names.get(&(a.index() as u32)) {
+                    Some(nm) => format!("{nm} the {kind}"),
+                    None => format!("a {kind}"),
+                }
             })
             .unwrap_or_else(|| format!("animal #{}", a.0)),
         EntityRef::Plant(p) => sim
@@ -180,6 +184,19 @@ pub fn describe(sim: &Sim, ev: &Event) -> String {
             format!("{s} lost the child she carried ({})", cause_name(*cause))
         }
         EventKind::Stillbirth => format!("{s}'s child was stillborn"),
+        EventKind::PredatorNamed { predator } => {
+            format!("the people gave a name to their terror: {}", name_of(sim, *predator))
+        }
+        EventKind::HuntStaked { against } => {
+            format!("{s} staked bait to draw out {}", name_of(sim, *against))
+        }
+        EventKind::PredatorSlain { predator, at_bait } => {
+            if *at_bait {
+                format!("{s} slew {} at the bait", name_of(sim, *predator))
+            } else {
+                format!("{s} slew {}", name_of(sim, *predator))
+            }
+        }
         EventKind::CaughtSickness { from, pathogen } => format!(
             "{s} caught the {} from {}",
             crate::pathogens::PATHOGENS[*pathogen as usize].name,

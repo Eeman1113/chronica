@@ -1197,6 +1197,19 @@ function drawWorld(F, cam, ctx){
     if(ascii){ctx.fillStyle=AC[a.s]||'#ccc';ctx.font=Math.round(z*0.9)+'px ui-monospace,monospace';ctx.fillText(AL[a.s]||'?',sx+z/2,sy+z/2);
       if(z>=22){ctx.fillStyle='rgba(255,255,255,.75)';ctx.font=Math.round(z*0.3)+'px '+FF;ctx.fillText(a.a,sx+z/2,sy-z*0.15);}}
     else{ctx.fillStyle=(a.s===3||a.s===4)?'#e15050':'#cdaf84';ctx.beginPath();ctx.arc(sx+z/2,sy+z/2,Math.max(1.4,z*0.28),0,7);ctx.fill();}}
+  for(const c of (F.corpses||[])){if(c.x<x0||c.x>x1||c.y<y0||c.y>y1)continue;const sx=w2sx(c.x),sy=w2sy(c.y);
+    if(!ascii)continue;
+    if(c.b){ // staked bait — a fresh lure
+      ctx.fillStyle='#c88a5a';ctx.font=Math.round(z*0.9)+'px ui-monospace,monospace';ctx.fillText('\u03b2',sx+z/2,sy+z/2);continue;}
+    const glyph=c.g>=3?'\u2234':(AL[c.s]||'x');           // bones ∴, else the beast's letter
+    const grey=Math.round(150-c.g*34);                     // fades greyer as it rots
+    ctx.fillStyle='rgb('+grey+','+grey+','+grey+')';
+    ctx.font=Math.round(z*0.85)+'px ui-monospace,monospace';
+    ctx.fillText(glyph,sx+z/2,sy+z/2);
+    if(c.g<3){ // the strike-through of a carcass
+      ctx.strokeStyle='rgb('+grey+','+grey+','+grey+')';ctx.lineWidth=1.3;
+      ctx.beginPath();ctx.moveTo(sx+z*0.2,sy+z/2);ctx.lineTo(sx+z*0.8,sy+z/2);ctx.stroke();}
+  }
   for(const p of (F.people||[])){if(p.x<x0||p.x>x1||p.y<y0||p.y>y1)continue;const sx=w2sx(p.x),sy=w2sy(p.y);
     if(ascii){ctx.fillStyle=CUL[p.c%5];ctx.font=Math.round(z*0.9)+'px ui-monospace,monospace';ctx.fillText(p.k?'•':'☺',sx+z/2,sy+z/2);
       if(z>=20){ctx.fillStyle='#fff';ctx.font=Math.round(z*0.34)+'px '+FF;ctx.fillText(p.n+' — '+p.a,sx+z/2,sy-z*0.2);}}
