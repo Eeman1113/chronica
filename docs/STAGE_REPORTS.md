@@ -98,3 +98,45 @@ observed and tuned as later stages add humans (hunting pressure changes the bala
 
 **Next:** Stage 4 — humans on the same brain architecture, with memory, relationships, knowledge,
 items; Test E.
+
+---
+
+## STAGE 4 — Humans
+
+**Done:** `objects` (buildings with maker/materials/condition/real food stores; item scaffolding);
+`humans` — every person per ENTITY_MODEL: body (health, nutrition, hunger, thirst, fatigue),
+personality traits + piety, uncapped decaying memories (kinds incl. inherited told-tales),
+individually-held techniques (Test E), practiced skills, typed relationships formed only through
+real encounters (friend/spouse/parent/child/teacher/student), marriage from repeated real
+courtship meetings, conception only when spouses are actually together, birth events with real
+parents, grief propagating through real kin bonds, water-carrying, camp anchoring + hunger-driven
+camp migration, gathering (greens/mast/root-digging from real plant biomass and litter), pursuit
+hunting, woodcutting (real trees → real logs), hut building (real wood), granary stores filled by
+real deposits and shared as band commons, farming (sowing real wheat plants; harvest events), and
+teaching along strong bonds with caused Taught/Learned event pairs. The decision model is the
+animal brain's architecture extended (needs + percepts + memory + relationships + personality →
+action + recorded `HumanRationale`).
+
+**Verified by:** Test E both scenarios pass — knowledge spreads through real co-located teaching
+with causally-chained events, and dies forever when every knower is killed before teaching.
+Full suite green: determinism ×4, Test A ×2, Test B, predator/prey. Human event stream verified
+in 6-year worlds: births, marriages, buildings, stores, felling, teaching all present and caused.
+
+**Rules audit — honest status:** Multi-generation demographic sustainability is NOT yet achieved:
+in 40-year test worlds the founding population (with 22+ births) declines to extinction within
+~6-10 years, driven by winter/spring food gaps and local resource depletion around fixed camps —
+each collapse fully diagnosed from the event log (thirst → stale water memories [fixed]; spring
+famine → missing storage economy [fixed]; autumn collapse → local over-extraction [partially
+addressed via sharing commons, farming founders, root foraging]). Every intervention has been
+physical/biological/behavioral — never a spawn, never a stat, never an exemption. Remaining
+candidates (documented for follow-up): seasonal whole-camp migration; stronger
+agriculture-first loop; per-cell forage regrowth tuning. A harsh world violates no rule (§2.4
+"if the world is boring, the world is boring" — likewise hard), but the acceptance-vision worlds
+need surviving lineages, so this remains the top open item.
+
+**Decisions:** water-carrying, mast/root foraging, and founding-generation knowledge seeds are
+recorded as behavioral/biological modeling choices (period-accurate), not cheats: all consume
+real state and emit real events.
+
+**Next:** Stage 5 — settlements as derived building/population clusters, belief clusters,
+grievances; Stage 6 conflict + tools.

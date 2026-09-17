@@ -41,6 +41,7 @@ fn forest_cover_is_derived_and_felling_reduces_it() {
         .map(|(i, _)| i)
         .collect();
     let n_fell = victims.len() * 6 / 10;
+    let events_before = sim.history.events.len();
     for &pi in victims.iter().take(n_fell) {
         kill_plant(&mut sim, pi, DeathCause::Felled, vec![]);
     }
@@ -54,10 +55,8 @@ fn forest_cover_is_derived_and_felling_reduces_it() {
     );
     let _ = cover0;
 
-    // every felled tree has a PlantDied{Felled} event
-    let felled_events = sim
-        .history
-        .events
+    // every felled tree has a PlantDied{Felled} event (scoped past the humans' own woodcutting)
+    let felled_events = sim.history.events[events_before..]
         .iter()
         .filter(|e| matches!(e.kind, EventKind::PlantDied { cause: DeathCause::Felled }))
         .count();

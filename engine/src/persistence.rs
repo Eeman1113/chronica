@@ -61,4 +61,5 @@ pub fn rebuild_after_load(sim: &mut Sim) {
     sim.plants.rebuild_cell_aggregates(sim.grid.n());
     crate::vegetation::refresh_cover(sim);
     sim.animals.rebuild_index(sim.grid.w, sim.grid.h);
+    sim.humans.rebuild_index(sim.grid.w, sim.grid.h);
 }

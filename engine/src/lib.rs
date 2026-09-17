@@ -11,6 +11,8 @@ pub mod vegetation;
 pub mod fire;
 pub mod brains;
 pub mod animals;
+pub mod objects;
+pub mod humans;
 pub mod history;
 pub mod sim;
 pub mod persistence;

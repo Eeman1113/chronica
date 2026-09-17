@@ -366,8 +366,7 @@ pub fn tick(sim: &mut Sim) {
                     a.thirst = 0.0;
                     a.days_thirsty = 0;
                 } else {
-                    let dir = ((at.0 - a.x).signum(), (at.1 - a.y).signum());
-                    move_animal(sim, ai, dir, sp.speed);
+                    move_animal_toward(sim, ai, at, sp.speed);
                     let a2 = &sim.animals.list[ai];
                     if grid_fresh(sim, a2.x, a2.y) {
                         let a2 = &mut sim.animals.list[ai];
@@ -380,9 +379,7 @@ pub fn tick(sim: &mut Sim) {
                 graze(sim, ai);
             }
             Action::MoveToForage { to } => {
-                let a = &sim.animals.list[ai];
-                let dir = ((to.0 - a.x).signum(), (to.1 - a.y).signum());
-                move_animal(sim, ai, dir, sp.speed.min(2));
+                move_animal_toward(sim, ai, to, sp.speed.min(3));
                 graze(sim, ai);
             }
             Action::Hunt { target } => {
@@ -395,9 +392,7 @@ pub fn tick(sim: &mut Sim) {
                 court(sim, ai, mate as usize);
             }
             Action::JoinHerd { to } => {
-                let a = &sim.animals.list[ai];
-                let dir = ((to.0 - a.x).signum(), (to.1 - a.y).signum());
-                move_animal(sim, ai, dir, 1);
+                move_animal_toward(sim, ai, to, 1);
             }
             Action::Rest => {
                 let a = &mut sim.animals.list[ai];
@@ -551,6 +546,31 @@ fn edible_at(plants: &crate::vegetation::Plants, cell: usize) -> f32 {
         .unwrap_or(0.0)
 }
 
+/// Step toward a destination, stopping ON it.
+fn move_animal_toward(sim: &mut Sim, ai: usize, to: (i32, i32), steps: i32) {
+    for _ in 0..steps {
+        let (dir, arrived) = {
+            let a = &sim.animals.list[ai];
+            (((to.0 - a.x).signum(), (to.1 - a.y).signum()), a.x == to.0 && a.y == to.1)
+        };
+        if arrived {
+            break;
+        }
+        let (nx, ny) = {
+            let a = &sim.animals.list[ai];
+            (a.x + dir.0, a.y + dir.1)
+        };
+        match sim.grid.idx(nx, ny) {
+            Some(j) if !sim.grid.ocean[j] => {
+                let a = &mut sim.animals.list[ai];
+                a.x = nx;
+                a.y = ny;
+            }
+            _ => break,
+        }
+    }
+}
+
 fn move_animal(sim: &mut Sim, ai: usize, dir: (i32, i32), steps: i32) {
     for _ in 0..steps {
         let (nx, ny) = {
@@ -631,7 +651,12 @@ fn hunt(sim: &mut Sim, ai: usize, ti: usize, deaths: &mut Vec<(usize, DeathCause
     };
     let speed = ANIMALS[sim.animals.list[ai].species as usize].speed;
     if dist > 1 {
-        move_animal(sim, ai, dir, speed);
+        let to = {
+            let t = &sim.animals.list[ti];
+            (t.x, t.y)
+        };
+        move_animal_toward(sim, ai, to, speed);
+        let _ = dir;
         let a = &mut sim.animals.list[ai];
         a.fatigue = (a.fatigue + 0.2).min(1.5);
     }
@@ -717,10 +742,8 @@ fn scavenge(sim: &mut Sim, ai: usize, ci: usize) {
         (cx - a.x).abs().max((cy - a.y).abs())
     };
     if dist > 0 {
-        let a = &sim.animals.list[ai];
-        let dir = ((cx - a.x).signum(), (cy - a.y).signum());
-        let speed = ANIMALS[a.species as usize].speed;
-        move_animal(sim, ai, dir, speed.min(3));
+        let speed = ANIMALS[sim.animals.list[ai].species as usize].speed;
+        move_animal_toward(sim, ai, (cx, cy), speed.min(3));
         return;
     }
     let bite = {
@@ -745,15 +768,12 @@ fn court(sim: &mut Sim, ai: usize, mi: usize) {
         (m.x - a.x).abs().max((m.y - a.y).abs())
     };
     if dist > 1 {
-        let (dir, sp) = {
+        let (to, sp) = {
             let a = &sim.animals.list[ai];
             let m = &sim.animals.list[mi];
-            (
-                ((m.x - a.x).signum(), (m.y - a.y).signum()),
-                ANIMALS[a.species as usize].speed.min(2),
-            )
+            ((m.x, m.y), ANIMALS[a.species as usize].speed.min(2))
         };
-        move_animal(sim, ai, dir, sp);
+        move_animal_toward(sim, ai, to, sp);
         return;
     }
     // conception: the female carries; sire recorded (real parentage, Test genetics)

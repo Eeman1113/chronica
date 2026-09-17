@@ -29,6 +29,8 @@ pub struct Sim {
     pub plants: crate::vegetation::Plants,
     pub animals: crate::animals::Animals,
     pub fire: crate::fire::FireState,
+    pub humans: crate::humans::Humans,
+    pub objects: crate::objects::Objects,
 }
 
 impl Sim {
@@ -45,6 +47,8 @@ impl Sim {
             plants: Default::default(),
             animals: Default::default(),
             fire,
+            humans: Default::default(),
+            objects: Default::default(),
         };
         sim.generate();
         sim
@@ -53,8 +57,18 @@ impl Sim {
     /// World generation dispatcher — grows per stage.
     fn generate(&mut self) {
         crate::terrain::generate(self);
+        // Hydrological spin-up: run climate+water alone until rivers flow, then rewind the
+        // clock. Life is seeded into a world whose water cycle is already real — no water body
+        // is ever placed, we simply let the rain fall before anyone is born to see it.
+        for _ in 0..240 {
+            self.clock.day += 1;
+            crate::climate::tick(self);
+            crate::water::tick(self);
+        }
+        self.clock.day = 0;
         crate::vegetation::generate(self);
         crate::animals::generate(self);
+        crate::humans::generate(self);
         self.history.push(
             0,
             crate::core::ids::EntityRef::Cell(0),
@@ -77,7 +91,9 @@ impl Sim {
         crate::vegetation::tick(self);
         // Phases 5–8: animal perception → cognition → action → physiology
         crate::animals::tick(self);
-        // Phases 9+ (humans, society/economy) land with their stages.
+        // Phases 5–8 for people: perception → cognition → action → physiology
+        crate::humans::tick(self);
+        // Phases 9+ (society/economy) land with their stages.
     }
 
     pub fn run_days(&mut self, days: u64) {

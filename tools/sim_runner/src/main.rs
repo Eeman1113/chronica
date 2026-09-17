@@ -66,6 +66,16 @@ fn main() {
     let probe = std::env::var("CHRONICA_PROBE").ok().and_then(|s| s.parse::<usize>().ok());
     for d in 0..args.days {
         sim.tick();
+        if std::env::var("CHRONICA_PROBE_H").is_ok() {
+            let probe_i: usize = std::env::var("CHRONICA_PROBE_H").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+            if let Some((i, h)) = sim.humans.list.iter().enumerate().filter(|(i2, h)| h.alive && *i2 >= probe_i).next() {
+                eprintln!(
+                    "day {} #{} pos=({},{}) hun={:.2} thi={:.2} nut={:.2} sd={} food={:.2} act={:?} ch={}",
+                    sim.clock.day, i, h.x, h.y, h.hunger, h.thirst, h.nutrition,
+                    h.days_starving, h.carried_food, h.current, h.rationale.chosen
+                );
+            }
+        }
         if let Some(pi) = probe {
             if let Some(a) = sim.animals.list.get(pi) {
                 if a.alive && d < 60 {
@@ -107,9 +117,12 @@ fn main() {
         use chronica_engine::history::EventKind;
         let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
         for ev in &sim.history.events {
+            let is_person = matches!(ev.subject, chronica_engine::core::ids::EntityRef::Person(_));
             let k = match &ev.kind {
                 EventKind::PlantDied { cause } => format!("PlantDied:{cause:?}"),
+                EventKind::Died { cause } if is_person => format!("HumanDied:{cause:?}"),
                 EventKind::Died { cause } => format!("Died:{cause:?}"),
+                other if is_person => format!("H:{}", kind_name(other)),
                 other => format!("{}", kind_name(other)),
             };
             *counts.entry(k).or_default() += 1;
@@ -164,7 +177,7 @@ fn print_stats(sim: &Sim) {
     let pop_str: Vec<String> =
         pops.iter().filter(|(_, c)| *c > 0).map(|(n, c)| format!("{n}:{c}")).collect();
     eprintln!(
-        "[{}] events={} rivers={} lakes={} surf={:.3} plants={} trees={} cover={:.2} | {}",
+        "[{}] events={} rivers={} lakes={} surf={:.3} plants={} trees={} cover={:.2} people={} | {}",
         sim.clock.date_string(),
         sim.history.events.len(),
         rivers,
@@ -173,6 +186,7 @@ fn print_stats(sim: &Sim) {
         live_plants,
         trees,
         cover,
+        chronica_engine::humans::population(sim),
         pop_str.join(" "),
     );
 }

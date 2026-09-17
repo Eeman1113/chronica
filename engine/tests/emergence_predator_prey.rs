@@ -31,7 +31,10 @@ fn population_dynamics_from_individual_encounters() {
         .history
         .events
         .iter()
-        .filter(|e| matches!(e.kind, EventKind::Died { .. }))
+        .filter(|e| {
+            matches!(e.kind, EventKind::Died { .. })
+                && matches!(e.subject, chronica_engine::core::ids::EntityRef::Animal(_))
+        })
         .collect();
     assert_eq!(dead, died_events.len(), "every animal death is recorded");
     let mut chained = 0;
