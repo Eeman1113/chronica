@@ -1,0 +1,1216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Chronica — a living world</title>
+<script src="https://code.highcharts.com/highcharts.js"></script>
+<style>
+/* =========================================================================
+   CHRONICA — DVR viewer for a live emergent world-simulation
+   Warm parchment-and-ink dark theme. Frosted floating chrome over a
+   full-bleed canvas map. System font stack only (SF feel).
+   ========================================================================= */
+
+:root{
+  /* --- palette : warm ink on aged parchment-dark ------------------------ */
+  --bg:            #14100e;   /* deep brown-black behind everything          */
+  --ink:           #d8cba8;   /* primary parchment text                      */
+  --ink-soft:      #a99c7c;   /* secondary text                              */
+  --ink-mute:      #7c7159;   /* tertiary / labels                           */
+  --ink-faint:     #554c3b;   /* hairline captions                           */
+
+  --accent:        #e0455a;   /* crimson — LIVE, important                   */
+  --accent-glow:   #ff5f72;   /* brighter crimson for glow                   */
+  --violet:        #c3addf;   /* muted violet — headings                     */
+  --gold:          #d9b464;   /* warm gold — highlights, chart accent        */
+  --sage:          #86a67c;   /* muted green — forest / plants               */
+
+  /* --- panel glass ------------------------------------------------------ */
+  --panel:         rgba(28,23,19,0.62);
+  --panel-solid:   rgba(24,20,16,0.92);
+  --panel-2:       rgba(38,31,25,0.55);
+  --line:          rgba(216,203,168,0.10);
+  --line-strong:   rgba(216,203,168,0.18);
+  --line-hair:     rgba(216,203,168,0.06);
+
+  --shadow: 0 18px 60px -18px rgba(0,0,0,0.72), 0 2px 8px -2px rgba(0,0,0,0.5);
+  --shadow-sm: 0 8px 26px -12px rgba(0,0,0,0.6);
+
+  --r-lg: 16px;
+  --r-md: 12px;
+  --r-sm: 9px;
+
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+          "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, monospace;
+
+  --ease: cubic-bezier(.22,.61,.36,1);
+  --ease-out: cubic-bezier(.16,1,.3,1);
+
+  --bar-h: 62px;
+  --pad: 16px;
+}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--ink);
+  font-family:var(--font);
+  font-size:14px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  overflow:hidden;
+  letter-spacing:-0.01em;
+  overscroll-behavior:none;
+}
+.num{font-variant-numeric:tabular-nums;letter-spacing:0}
+
+/* subtle grain + warm vignette so the black is never flat --------------- */
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:5;
+  background:
+    radial-gradient(120% 90% at 50% -10%, rgba(80,54,38,0.22), transparent 55%),
+    radial-gradient(140% 120% at 50% 120%, rgba(20,14,10,0.6), transparent 60%);
+  mix-blend-mode:normal;
+}
+
+/* ---- the world map canvas : full-bleed, everything floats over it ----- */
+#map{
+  position:fixed;inset:0;width:100vw;height:100vh;display:block;
+  background:var(--bg);z-index:0;touch-action:none;cursor:grab;
+}
+#map:active{cursor:grabbing}
+
+/* ======================================================================= */
+/*  TOP COMMAND BAR                                                         */
+/* ======================================================================= */
+.topbar{
+  position:fixed;top:14px;left:14px;right:14px;z-index:30;
+  display:flex;align-items:center;gap:14px;
+  padding:9px 14px 9px 16px;
+  border-radius:var(--r-lg);
+  background:var(--panel);
+  border:1px solid var(--line);
+  box-shadow:var(--shadow);
+  -webkit-backdrop-filter:blur(26px) saturate(1.5);
+  backdrop-filter:blur(26px) saturate(1.5);
+}
+.topbar::after{ /* top hairline sheen */
+  content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:linear-gradient(180deg, rgba(255,255,255,0.05), transparent 40%);
+}
+
+/* wordmark ------------------------------------------------------------- */
+.brand{display:flex;align-items:center;gap:11px;flex:0 0 auto;padding-right:4px}
+.brand .glyph{
+  width:30px;height:30px;border-radius:8px;flex:0 0 auto;
+  display:grid;place-items:center;
+  background:linear-gradient(150deg, #3a2a20, #241a14);
+  border:1px solid var(--line-strong);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.06);
+  color:var(--gold);font-size:16px;
+}
+.brand .wm{display:flex;flex-direction:column;line-height:1.05}
+.brand .wm b{
+  font-size:14.5px;font-weight:650;letter-spacing:0.16em;color:var(--ink);
+  text-transform:uppercase;
+}
+.brand .wm span{font-size:10px;color:var(--ink-mute);letter-spacing:0.14em;text-transform:uppercase}
+
+.bar-sep{width:1px;height:30px;background:var(--line);flex:0 0 auto}
+
+/* transport (pause + speed chips + live) -------------------------------- */
+.transport{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+.chip{
+  appearance:none;border:1px solid var(--line);background:var(--panel-2);
+  color:var(--ink-soft);font-family:inherit;font-size:12px;font-weight:550;
+  padding:7px 11px;border-radius:9px;cursor:pointer;
+  transition:all .18s var(--ease);white-space:nowrap;line-height:1;
+  font-variant-numeric:tabular-nums;
+}
+.chip:hover{color:var(--ink);border-color:var(--line-strong);background:rgba(48,39,31,0.7);transform:translateY(-1px)}
+.chip:active{transform:translateY(0) scale(.97)}
+.chip.on{
+  background:linear-gradient(180deg, rgba(217,180,100,0.22), rgba(217,180,100,0.10));
+  color:#f0e2bf;border-color:rgba(217,180,100,0.45);
+  box-shadow:0 0 0 1px rgba(217,180,100,0.12), inset 0 1px 0 rgba(255,255,255,0.08);
+}
+.chip.icon{width:34px;padding:0;height:32px;display:grid;place-items:center;font-size:13px}
+
+/* the LIVE button ------------------------------------------------------- */
+.live-btn{
+  appearance:none;font-family:inherit;cursor:pointer;
+  display:flex;align-items:center;gap:7px;
+  padding:7px 13px 7px 11px;border-radius:9px;font-size:12px;font-weight:650;
+  letter-spacing:0.06em;
+  border:1px solid rgba(224,69,90,0.35);
+  color:#f0b9c1;background:rgba(224,69,90,0.10);
+  transition:all .2s var(--ease);
+}
+.live-btn:hover{background:rgba(224,69,90,0.16);transform:translateY(-1px)}
+.live-btn .dot{
+  width:8px;height:8px;border-radius:50%;background:var(--accent);flex:0 0 auto;
+  box-shadow:0 0 0 0 rgba(224,69,90,0.5);
+}
+.live-btn.on{
+  color:#fff;
+  background:linear-gradient(180deg, var(--accent-glow), var(--accent));
+  border-color:transparent;
+  box-shadow:0 0 22px -4px rgba(224,69,90,0.7), inset 0 1px 0 rgba(255,255,255,0.22);
+}
+.live-btn.on .dot{background:#fff;animation:pulse 2s var(--ease-out) infinite}
+@keyframes pulse{
+  0%{box-shadow:0 0 0 0 rgba(255,255,255,0.55)}
+  70%{box-shadow:0 0 0 7px rgba(255,255,255,0)}
+  100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}
+}
+
+/* timeline scrubber ----------------------------------------------------- */
+.scrub-wrap{flex:1 1 auto;min-width:120px;display:flex;flex-direction:column;gap:5px;padding:0 4px}
+.scrub-status{
+  display:flex;align-items:baseline;gap:8px;font-size:11px;color:var(--ink-mute);
+  letter-spacing:0.01em;line-height:1;padding-left:2px;
+}
+.scrub-status .now{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+.scrub-status .behind{color:var(--accent);font-weight:600}
+.scrub-status .caught{color:var(--sage);font-weight:600;display:inline-flex;align-items:center;gap:5px}
+.scrub-status .caught::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--sage);box-shadow:0 0 8px var(--sage)}
+
+.scrub{
+  position:relative;height:22px;cursor:pointer;display:flex;align-items:center;
+  touch-action:none;
+}
+.scrub .track{
+  position:absolute;left:0;right:0;height:6px;border-radius:4px;
+  background:rgba(216,203,168,0.09);overflow:hidden;
+  box-shadow:inset 0 1px 2px rgba(0,0,0,0.35);
+}
+.scrub .buffered{ /* recorded / seekable region */
+  position:absolute;left:0;top:0;bottom:0;
+  background:linear-gradient(90deg, rgba(195,173,223,0.16), rgba(195,173,223,0.30));
+  border-radius:4px;
+}
+.scrub .played{ /* oldest -> playhead */
+  position:absolute;left:0;top:0;bottom:0;
+  background:linear-gradient(90deg, rgba(217,180,100,0.55), rgba(224,69,90,0.7));
+  border-radius:4px;
+}
+.scrub .head{
+  position:absolute;top:50%;width:14px;height:14px;border-radius:50%;
+  transform:translate(-50%,-50%);
+  background:radial-gradient(circle at 40% 35%, #fff, #f0e2bf 55%, #d9b464);
+  border:1.5px solid #14100e;
+  box-shadow:0 2px 8px rgba(0,0,0,0.6), 0 0 0 3px rgba(217,180,100,0.14);
+  transition:box-shadow .2s var(--ease);z-index:3;
+}
+.scrub:hover .head, .scrub.drag .head{box-shadow:0 2px 10px rgba(0,0,0,0.7), 0 0 0 5px rgba(217,180,100,0.2)}
+.scrub .liveMark{ /* pulsing marker at the live edge */
+  position:absolute;right:0;top:50%;transform:translate(50%,-50%);
+  width:10px;height:10px;border-radius:50%;background:var(--accent);z-index:2;
+  box-shadow:0 0 10px rgba(224,69,90,0.8);
+}
+.scrub .liveMark::after{
+  content:"";position:absolute;inset:0;border-radius:50%;background:var(--accent);
+  animation:ripple 2.4s var(--ease-out) infinite;
+}
+@keyframes ripple{0%{transform:scale(1);opacity:.7}100%{transform:scale(3);opacity:0}}
+
+/* download world -------------------------------------------------------- */
+.dl-btn{
+  appearance:none;text-decoration:none;font-family:inherit;cursor:pointer;
+  display:flex;align-items:center;gap:7px;flex:0 0 auto;
+  padding:8px 13px;border-radius:9px;font-size:12px;font-weight:550;
+  color:var(--ink-soft);background:var(--panel-2);border:1px solid var(--line);
+  transition:all .18s var(--ease);
+}
+.dl-btn:hover{color:var(--ink);border-color:var(--line-strong);transform:translateY(-1px)}
+.dl-btn svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.7}
+
+/* ======================================================================= */
+/*  RIGHT INSPECTOR PANEL                                                   */
+/* ======================================================================= */
+.inspector{
+  position:fixed;top:88px;right:14px;bottom:14px;width:360px;z-index:20;
+  display:flex;flex-direction:column;
+  border-radius:var(--r-lg);
+  background:var(--panel);
+  border:1px solid var(--line);
+  box-shadow:var(--shadow);
+  -webkit-backdrop-filter:blur(30px) saturate(1.5);
+  backdrop-filter:blur(30px) saturate(1.5);
+  overflow:hidden;
+  transition:transform .42s var(--ease-out);
+}
+.insp-scroll{overflow-y:auto;overflow-x:hidden;padding:2px 0 20px;scrollbar-width:thin;scrollbar-color:rgba(216,203,168,0.2) transparent}
+.insp-scroll::-webkit-scrollbar{width:9px}
+.insp-scroll::-webkit-scrollbar-thumb{background:rgba(216,203,168,0.16);border-radius:9px;border:3px solid transparent;background-clip:padding-box}
+.insp-scroll::-webkit-scrollbar-thumb:hover{background:rgba(216,203,168,0.28);background-clip:padding-box}
+
+.insp-head{
+  padding:16px 18px 12px;position:sticky;top:0;z-index:2;
+  background:linear-gradient(180deg, rgba(24,20,16,0.6), rgba(24,20,16,0.0));
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+}
+.insp-head h1{
+  margin:0;font-size:11px;font-weight:600;letter-spacing:0.18em;text-transform:uppercase;
+  color:var(--ink-mute);
+}
+.insp-head .date{
+  margin-top:3px;font-size:19px;font-weight:600;color:var(--ink);letter-spacing:-0.01em;
+  font-variant-numeric:tabular-nums;
+}
+.insp-head .sub{font-size:11.5px;color:var(--ink-mute);margin-top:1px}
+
+.sect{padding:6px 18px 18px}
+.sect-label{
+  font-size:10.5px;font-weight:650;letter-spacing:0.16em;text-transform:uppercase;
+  color:var(--violet);opacity:.85;margin:6px 0 11px;display:flex;align-items:center;gap:8px;
+}
+.sect-label::after{content:"";flex:1;height:1px;background:var(--line-hair)}
+
+/* stat cards ----------------------------------------------------------- */
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.stat{
+  padding:12px 13px;border-radius:var(--r-md);
+  background:linear-gradient(160deg, rgba(44,36,29,0.5), rgba(30,25,20,0.35));
+  border:1px solid var(--line-hair);position:relative;overflow:hidden;
+  transition:border-color .2s var(--ease), transform .2s var(--ease);
+}
+.stat:hover{border-color:var(--line);transform:translateY(-1px)}
+.stat .k{font-size:10.5px;color:var(--ink-mute);letter-spacing:0.05em;text-transform:uppercase;font-weight:550}
+.stat .v{font-size:25px;font-weight:640;color:var(--ink);margin-top:3px;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-0.02em}
+.stat .u{font-size:11px;color:var(--ink-soft);font-weight:500;margin-top:4px}
+.stat .u b{color:var(--gold);font-weight:600}
+.stat .accent{position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:3px}
+.stat.people .accent{background:var(--gold)}
+.stat.plants .accent{background:var(--sage)}
+.stat.forest .accent{background:#6f9e8a}
+.stat.events .accent{background:var(--accent)}
+.stat.events .v{color:#f0b9c1}
+
+/* charts --------------------------------------------------------------- */
+.chart-card{
+  border-radius:var(--r-md);border:1px solid var(--line-hair);
+  background:rgba(24,20,16,0.35);padding:8px 6px 4px;margin-bottom:12px;
+}
+.chart-card .ct{font-size:11px;color:var(--ink-mute);padding:2px 8px 0;letter-spacing:0.04em;display:flex;justify-content:space-between;align-items:baseline}
+.chart-card .ct b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+.chart{width:100%;height:96px}
+#censusChart{height:150px}
+
+/* faiths --------------------------------------------------------------- */
+.faith{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--line-hair)}
+.faith:last-child{border-bottom:none}
+.faith .fn{flex:1;font-size:13px;color:var(--ink);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.faith .fc{font-size:12.5px;color:var(--gold);font-weight:600;font-variant-numeric:tabular-nums}
+.faith .fc small{color:var(--ink-mute);font-weight:500;margin-left:3px}
+.faith-gone{font-size:11.5px;color:var(--ink-faint);font-style:italic;margin-top:9px}
+
+/* chronicle feed ------------------------------------------------------- */
+.chron{display:flex;flex-direction:column;gap:0}
+.chron .row{
+  display:flex;gap:10px;padding:8px 2px;border-bottom:1px solid var(--line-hair);
+  font-size:12.5px;line-height:1.45;color:var(--ink-soft);
+  animation:slideIn .5s var(--ease-out) both;
+}
+.chron .row:last-child{border-bottom:none}
+.chron .row .tick{
+  flex:0 0 auto;width:5px;height:5px;border-radius:50%;margin-top:7px;
+  background:var(--ink-faint);
+}
+.chron .row.fresh .tick{background:var(--accent);box-shadow:0 0 7px var(--accent)}
+.chron .row em{color:var(--ink);font-style:normal;font-weight:550}
+@keyframes slideIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+
+/* archive gallery ------------------------------------------------------ */
+.gallery{display:flex;flex-direction:column;gap:10px}
+.world-card{
+  display:flex;gap:12px;padding:10px;border-radius:var(--r-md);
+  background:linear-gradient(160deg, rgba(40,33,26,0.45), rgba(26,21,17,0.3));
+  border:1px solid var(--line-hair);align-items:center;
+  transition:all .2s var(--ease);
+}
+.world-card:hover{border-color:var(--line-strong);transform:translateY(-1px);background:linear-gradient(160deg, rgba(48,39,31,0.55), rgba(30,24,19,0.4))}
+.world-card .thumb{
+  flex:0 0 auto;width:60px;height:60px;border-radius:8px;overflow:hidden;
+  background:#0e0b09;border:1px solid var(--line);position:relative;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,0.4);
+}
+.world-card .thumb img{width:100%;height:100%;object-fit:cover;display:block;filter:sepia(.15) saturate(1.05)}
+.world-card .thumb .ph{width:100%;height:100%;display:grid;place-items:center;color:var(--ink-faint);font-size:18px}
+.world-card .meta{flex:1;min-width:0}
+.world-card .meta .wn{font-size:13px;font-weight:600;color:var(--ink);letter-spacing:0.01em}
+.world-card .meta .wy{font-size:11.5px;color:var(--ink-mute);margin-top:2px;font-variant-numeric:tabular-nums}
+.world-card .meta .we{font-size:11px;color:var(--ink-faint);margin-top:1px;font-variant-numeric:tabular-nums}
+.world-card .save{
+  flex:0 0 auto;width:32px;height:32px;border-radius:8px;display:grid;place-items:center;
+  color:var(--ink-mute);border:1px solid var(--line);text-decoration:none;
+  transition:all .18s var(--ease);
+}
+.world-card .save:hover{color:var(--gold);border-color:rgba(217,180,100,0.4);background:rgba(217,180,100,0.08)}
+.world-card .save svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.7}
+
+/* ======================================================================= */
+/*  BOTTOM-LEFT HINT + mobile drawer toggle                                */
+/* ======================================================================= */
+.hint{
+  position:fixed;left:16px;bottom:16px;z-index:15;
+  font-size:11px;color:var(--ink-faint);letter-spacing:0.03em;
+  padding:6px 11px;border-radius:20px;
+  background:rgba(20,16,12,0.4);border:1px solid var(--line-hair);
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+  pointer-events:none;user-select:none;
+  display:flex;align-items:center;gap:7px;
+  transition:opacity .5s var(--ease);
+}
+.hint svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:1.5;opacity:.7}
+
+.drawer-toggle{
+  position:fixed;right:14px;bottom:14px;z-index:25;display:none;
+  width:52px;height:52px;border-radius:50%;
+  background:var(--panel-solid);border:1px solid var(--line-strong);
+  color:var(--violet);box-shadow:var(--shadow);cursor:pointer;
+  -webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);
+  place-items:center;
+}
+.drawer-toggle svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.6}
+
+/* connection status pill ------------------------------------------------ */
+.conn{
+  position:fixed;left:16px;top:88px;z-index:15;display:none;align-items:center;gap:7px;
+  font-size:11px;color:var(--ink-mute);padding:6px 11px;border-radius:20px;
+  background:rgba(20,16,12,0.5);border:1px solid var(--line-hair);
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+}
+.conn.show{display:flex}
+.conn .d{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+
+/* ======================================================================= */
+/*  RESPONSIVE — inspector becomes a bottom sheet on narrow screens        */
+/* ======================================================================= */
+@media (max-width:820px){
+  .inspector{
+    top:auto;left:8px;right:8px;bottom:8px;width:auto;
+    height:min(66vh,560px);
+    transform:translateY(calc(100% + 20px));
+  }
+  .inspector.open{transform:translateY(0)}
+  .drawer-toggle{display:grid}
+  .inspector::before{ /* grab handle */
+    content:"";position:absolute;top:8px;left:50%;transform:translateX(-50%);
+    width:38px;height:4px;border-radius:3px;background:var(--line-strong);z-index:3;
+  }
+  .insp-head{padding-top:22px}
+}
+@media (max-width:720px){
+  .topbar{flex-wrap:wrap;gap:9px;padding:10px 12px}
+  .brand{order:1}
+  .dl-btn{order:2;margin-left:auto}
+  .bar-sep{display:none}
+  .transport{order:4}
+  .scrub-wrap{order:3;flex-basis:100%;min-width:100%}
+  .dl-btn .txt{display:none}
+  .dl-btn{padding:8px 10px}
+}
+@media (max-width:480px){
+  .topbar{top:8px;left:8px;right:8px}
+  .transport{flex-wrap:wrap}
+  .chip{padding:6px 9px;font-size:11px}
+  .hint{display:none}
+}
+
+/* reduced motion -------------------------------------------------------- */
+@media (prefers-reduced-motion:reduce){
+  *{animation:none !important;transition-duration:.01ms !important}
+  .live-btn.on .dot,.scrub .liveMark::after{animation:none !important}
+}
+</style>
+</head>
+<body>
+
+<!-- ===================================================================== -->
+<!--  THE WORLD MAP — existing canvas renderer draws here (preserved)       -->
+<!-- ===================================================================== -->
+<canvas id="map"></canvas>
+
+<!-- ===================================================================== -->
+<!--  TOP COMMAND BAR                                                       -->
+<!-- ===================================================================== -->
+<header class="topbar">
+  <div class="brand">
+    <div class="glyph">◈</div>
+    <div class="wm"><b>Chronica</b><span id="brandDate">the known world</span></div>
+  </div>
+
+  <div class="bar-sep"></div>
+
+  <div class="transport" id="transport" role="group" aria-label="Playback speed">
+    <button class="chip icon" id="pauseBtn" title="Pause" aria-label="Pause">❚❚</button>
+    <!-- speed chips are injected by JS -->
+    <button class="live-btn on" id="liveBtn" title="Jump to the live edge">
+      <span class="dot"></span>LIVE
+    </button>
+  </div>
+
+  <div class="scrub-wrap">
+    <div class="scrub-status" id="scrubStatus">
+      <span class="caught">LIVE</span>
+    </div>
+    <div class="scrub" id="scrub" role="slider" aria-label="Timeline" tabindex="0"
+         aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+      <div class="track">
+        <div class="buffered" id="bufFill"></div>
+        <div class="played" id="playFill"></div>
+      </div>
+      <div class="liveMark"></div>
+      <div class="head" id="playHead"></div>
+    </div>
+  </div>
+
+  <a class="dl-btn" id="dlWorld" href="/download/current" download title="Download the current world save">
+    <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>
+    <span class="txt">Download world</span>
+  </a>
+</header>
+
+<!-- ===================================================================== -->
+<!--  RIGHT INSPECTOR PANEL                                                 -->
+<!-- ===================================================================== -->
+<aside class="inspector" id="inspector">
+  <div class="insp-scroll">
+
+    <div class="insp-head">
+      <h1>The world now</h1>
+      <div class="date" id="liveDate">Year —</div>
+      <div class="sub" id="liveSub">listening for the world…</div>
+    </div>
+
+    <!-- key stats -->
+    <div class="sect">
+      <div class="stats">
+        <div class="stat people">
+          <div class="accent"></div>
+          <div class="k">People</div>
+          <div class="v num" id="stPeople">—</div>
+          <div class="u"><b id="stKids">—</b> children</div>
+        </div>
+        <div class="stat plants">
+          <div class="accent"></div>
+          <div class="k">Plants</div>
+          <div class="v num" id="stPlants">—</div>
+          <div class="u"><b id="stTrees">—</b> trees</div>
+        </div>
+        <div class="stat forest">
+          <div class="accent"></div>
+          <div class="k">Forest</div>
+          <div class="v num" id="stForest">—</div>
+          <div class="u">land under canopy</div>
+        </div>
+        <div class="stat events">
+          <div class="accent"></div>
+          <div class="k">Events</div>
+          <div class="v num" id="stEvents">—</div>
+          <div class="u">this world's story</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- charts -->
+    <div class="sect">
+      <div class="sect-label">Vital signs</div>
+      <div class="chart-card">
+        <div class="ct">Population <b id="popNow">—</b></div>
+        <div class="chart" id="popChart"></div>
+      </div>
+      <div class="chart-card">
+        <div class="ct">Living creatures <b id="censusTotal">—</b></div>
+        <div class="chart" id="censusChart"></div>
+      </div>
+    </div>
+
+    <!-- faiths -->
+    <div class="sect">
+      <div class="sect-label">Faiths</div>
+      <div id="faithList"></div>
+      <div class="faith-gone" id="faithGone"></div>
+    </div>
+
+    <!-- chronicle -->
+    <div class="sect">
+      <div class="sect-label">Chronicle</div>
+      <div class="chron" id="chronFeed"></div>
+    </div>
+
+    <!-- archive gallery -->
+    <div class="sect">
+      <div class="sect-label">Worlds that were</div>
+      <div class="gallery" id="gallery"></div>
+    </div>
+
+  </div>
+</aside>
+
+<!-- floating helpers -->
+<div class="hint" id="hint">
+  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l2 2"/></svg>
+  scroll to zoom · drag to pan
+</div>
+
+<div class="conn" id="conn"><span class="d"></span><span id="connTxt">reconnecting…</span></div>
+
+<button class="drawer-toggle" id="drawerToggle" aria-label="Toggle inspector">
+  <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+</button>
+
+<script>
+"use strict";
+/* =========================================================================
+   CHRONICA VIEWER — front-end logic
+   -------------------------------------------------------------------------
+   Responsibilities:
+     • poll /live.json (the world "now") every ~2s
+     • fetch /frame?day=D for the DVR playhead
+     • DVR playhead math: pause / speed / LIVE / seek, clamped to <= live
+     • camera pan+zoom state that survives frame updates
+     • render loop calls the EXISTING drawWorld(F, cam, ctx)
+     • panels, Highcharts, archive gallery — all fed defensively
+   ========================================================================= */
+
+const $  = (s,r=document)=>r.querySelector(s);
+const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const lerp=(a,b,t)=>a+(b-a)*t;
+const fmt = n => (n==null||isNaN(n)) ? "—" : Math.round(n).toLocaleString("en-US");
+
+/* ---- world-time helpers ------------------------------------------------
+   The sim counts in DAYS. We display YEARS (365 days). "day 0" is the
+   world's birth. liveDay is the recorded edge; the playhead is a float day. */
+const DAYS_PER_YEAR = 360;
+const yearOf = d => Math.floor((d||0)/DAYS_PER_YEAR);
+
+/* =========================================================================
+   1. STATE
+   ========================================================================= */
+const state = {
+  live: null,            // last /live.json payload
+  frame: null,           // last decoded /frame payload (what drawWorld renders)
+  frameDay: null,        // which day `frame` represents
+  loadingDay: null,      // an in-flight /frame request's day (de-dupe)
+
+  playDay: 0,            // the DVR playhead, a float in days
+  oldestDay: 0,          // seekable floor
+  liveDay: 0,            // seekable ceiling (recorded edge)
+
+  speed: 30,             // sim-days per real second (0 == paused)
+  isLive: true,          // locked to the live edge?
+  seeking: false,        // user is dragging the scrubber
+
+  lastT: performance.now(),
+  seenChron: new Set(),  // de-dupe chronicle rows so we can animate new ones
+};
+
+/* camera — matches the existing renderer's model:
+   cam.x / cam.y = world-cell coordinate at screen center; cam.cell = px/cell */
+const cam = { x: 0, y: 0, cell: 14, follow: null };
+
+/* speed presets, in sim-days per real second. 365 == "1 year / sec" */
+const SPEEDS = [
+  { label: "2×",   v: 2   },
+  { label: "10×",  v: 10  },
+  { label: "30×",  v: 30  },
+  { label: "90×",  v: 90  },
+  { label: "1 yr/s", v: 365 },
+];
+
+/* =========================================================================
+   2. SAMPLE FALLBACK DATA — so the page renders before/without a server
+   ========================================================================= */
+function sampleLive(){
+  const live = 4200 + Math.floor((performance.now()/1000)%40)*100;
+  const species = [
+    {n:"Deer",c:340},{n:"Wolf",c:64},{n:"Boar",c:128},{n:"Hare",c:410},
+    {n:"Bear",c:22},{n:"Aurochs",c:71},{n:"Fox",c:95},{n:"Elk",c:53}
+  ];
+  return {
+    date:"Year "+yearOf(live), liveDay:live, oldestDay:Math.max(0,live-3650), newestDay:live,
+    stats:{ people:1284, plants:58420, trees:9310, cover:0.372, events:20418, species },
+    faiths:[
+      {n:"The Ember Covenant",c:412},{n:"Keepers of the Deep Furrow",c:263},
+      {n:"The Pale Moon Circle",c:151},{n:"Wardens of the Old Oak",c:64},
+      {n:"The Vanishing Path",c:0},{n:"Cult of the Drowned King",c:0}
+    ],
+    past:[
+      {no:7,seed:"amber-vale",year:842,events:31204,base:"world_0007"},
+      {no:6,seed:"iron-marsh",year:511,events:18990,base:"world_0006"},
+      {no:5,seed:"salt-reach",year:1203,events:44121,base:"world_0005"},
+      {no:4,seed:"grey-fen",year:388,events:9820,base:"world_0004"},
+    ],
+    chron:[
+      "The Ember Covenant raised a great hall at Highfell.",
+      "A hard winter took the herds of the northern steppe.",
+      "Maren of Oakhollow became first Warden of the Old Oak.",
+      "War broke between Salt-Reach and the Iron Marsh over the ford.",
+      "The last believer of the Vanishing Path died at sea.",
+    ]
+  };
+}
+function sampleFrame(day){
+  const W=180,H=120, cells=new Uint8Array(W*H);
+  for(let i=0;i<cells.length;i++){ const x=i%W,y=(i/W)|0;
+    cells[i]= ((Math.sin(x/9)+Math.cos(y/7))>0.2)?3:((x*y)%17===0?5:1); }
+  const people=[],animals=[];
+  for(let i=0;i<40;i++)people.push({x:20+((i*7)%140),y:15+((i*11)%90),n:"—",c:i%4,a:20,k:i%5===0?1:0});
+  for(let i=0;i<60;i++)animals.push({x:((i*13)%W),y:((i*17)%H),s:i%8,a:1,t:0});
+  return {w:W,h:H,day,cells:btoa(String.fromCharCode(...cells)),people,animals,
+          buildings:[],setts:[{n:"Highfell",x:64,y:40},{n:"Oakhollow",x:120,y:70}],marks:[]};
+}
+
+/* =========================================================================
+   3. DATA FETCHING
+   ========================================================================= */
+let liveOK = false, frameOK = false;
+
+async function pollLive(){
+  try{
+    const r = await fetch("/live.json",{cache:"no-store"});
+    if(!r.ok) throw 0;
+    const j = await r.json();
+    applyLive(j); liveOK = true; setConn(true);
+  }catch(e){
+    if(!state.live){ applyLive(sampleLive()); }  // first-run fallback only
+    else if(liveOK===false){ /* keep last good data */ }
+    setConn(false);
+  }
+}
+
+function applyLive(j){
+  if(!j || typeof j!=="object") return;
+  state.live = j;
+  state.oldestDay = Math.max(0, j.oldestDay|0);
+  const newLive = Math.max(j.liveDay|0, state.oldestDay);
+  // keep the playhead pinned to the edge if we're LIVE
+  if(state.isLive) state.playDay = newLive;
+  state.liveDay = newLive;
+  state.playDay = clamp(state.playDay, state.oldestDay, state.liveDay);
+  renderPanels(j);
+}
+
+async function fetchFrame(day){
+  day = clamp(Math.round(day), state.oldestDay, state.liveDay);
+  if(day===state.frameDay || day===state.loadingDay) return;
+  state.loadingDay = day;
+  try{
+    const r = await fetch("/frame?day="+day,{cache:"no-store"});
+    if(!r.ok) throw 0;
+    const j = await r.json();
+    j._cells = decodeCells(j.cells, j.w, j.h);
+    state.frame = j; state.frameDay = day; frameOK = true;
+  }catch(e){
+    if(!state.frame){ const s=sampleFrame(day); s._cells=decodeCells(s.cells,s.w,s.h); state.frame=s; state.frameDay=day; }
+  }finally{
+    state.loadingDay = null;
+  }
+}
+
+/* base64 -> Uint8Array cell grid (guarded) */
+function decodeCells(b64,w,h){
+  try{
+    if(!b64) return null;
+    const bin=atob(b64), n=bin.length, u=new Uint8Array(n);
+    for(let i=0;i<n;i++)u[i]=bin.charCodeAt(i);
+    return u;
+  }catch(e){ return null; }
+}
+
+/* connection pill */
+let connT=null;
+function setConn(ok){
+  const el=$("#conn");
+  if(ok){ el.classList.remove("show"); return; }
+  clearTimeout(connT);
+  connT=setTimeout(()=>{ $("#connTxt").textContent="reconnecting to the world…"; el.classList.add("show"); },1500);
+}
+
+/* =========================================================================
+   4. DVR PLAYHEAD ENGINE
+   ========================================================================= */
+function setSpeed(v){
+  state.speed=v;
+  if(v>0 && state.isLive){ /* leaving pause but staying live is fine */ }
+  paintTransport();
+}
+function goLive(){
+  state.isLive=true;
+  state.playDay=state.liveDay;
+  if(state.speed===0) state.speed=30; // un-pause when jumping to live
+  paintTransport();
+}
+function togglePause(){
+  if(state.speed===0){ state.speed = state._lastSpeed||30; }
+  else { state._lastSpeed=state.speed; state.speed=0; }
+  paintTransport();
+}
+
+/* advance the playhead each animation frame */
+function tickDVR(dt){
+  if(!state.seeking && state.speed>0){
+    state.playDay += state.speed*dt;
+  }
+  // clamp to the seekable window; snap to LIVE when we catch the edge
+  if(state.playDay >= state.liveDay){
+    state.playDay = state.liveDay;
+    if(state.speed>0 && !state.seeking) state.isLive = true;
+  }
+  if(state.playDay < state.oldestDay) state.playDay = state.oldestDay;
+
+  // make sure the frame on screen matches the (rounded) playhead
+  const want = Math.round(state.playDay);
+  if(want!==state.frameDay) fetchFrame(want);
+
+  paintScrubber();
+}
+
+/* =========================================================================
+   5. TRANSPORT + SCRUBBER UI
+   ========================================================================= */
+function buildTransport(){
+  const t=$("#transport"), live=$("#liveBtn");
+  SPEEDS.forEach(sp=>{
+    const b=document.createElement("button");
+    b.className="chip"; b.textContent=sp.label; b.dataset.v=sp.v;
+    b.title=sp.v+" sim-days per second";
+    b.onclick=()=>{ state.isLive=false; setSpeed(sp.v); };
+    t.insertBefore(b, live);
+  });
+}
+function paintTransport(){
+  $("#pauseBtn").classList.toggle("on", state.speed===0);
+  $("#pauseBtn").textContent = state.speed===0 ? "▶" : "❚❚";
+  $("#pauseBtn").title = state.speed===0 ? "Play" : "Pause";
+  $$(".transport .chip:not(.icon)").forEach(b=>{
+    b.classList.toggle("on", !state.isLive && +b.dataset.v===state.speed);
+  });
+  $("#liveBtn").classList.toggle("on", state.isLive);
+}
+
+function paintScrubber(){
+  const span = Math.max(1, state.liveDay - state.oldestDay);
+  const pct  = clamp((state.playDay - state.oldestDay)/span, 0, 1);
+  $("#playHead").style.left = (pct*100)+"%";
+  $("#playFill").style.width = (pct*100)+"%";
+  $("#bufFill").style.width = "100%"; // whole window is recorded/seekable
+  $("#scrub").setAttribute("aria-valuenow", Math.round(pct*100));
+
+  // status line — impossible to confuse past vs live
+  const st=$("#scrubStatus");
+  const nowY = yearOf(state.playDay), liveY = yearOf(state.liveDay);
+  const behind = liveY - nowY;
+  if(state.isLive || state.playDay>=state.liveDay-0.5){
+    st.innerHTML = `<span class="caught">LIVE</span> <span>Year <span class="now num">${liveY}</span></span>`;
+  }else{
+    st.innerHTML =
+      `<span>Watching Year <span class="now num">${nowY}</span></span>` +
+      `<span>· Live Year <span class="num">${liveY}</span></span>` +
+      (behind>0 ? `<span class="behind num">−${behind} ${behind===1?"year":"years"} behind</span>` : ``);
+  }
+  $("#brandDate").textContent = state.live?.date || ("Year "+liveY);
+}
+
+/* scrubbing interactions (mouse + touch + keyboard) */
+function scrubToClientX(clientX){
+  const r=$("#scrub").getBoundingClientRect();
+  const pct=clamp((clientX-r.left)/Math.max(1,r.width),0,1);
+  const span=Math.max(1,state.liveDay-state.oldestDay);
+  const day=state.oldestDay+pct*span;
+  state.playDay=day;
+  state.isLive = day>=state.liveDay-0.5;
+  fetchFrame(Math.round(day));
+  paintScrubber(); paintTransport();
+}
+function initScrub(){
+  const s=$("#scrub");
+  const down=e=>{
+    state.seeking=true; s.classList.add("drag");
+    scrubToClientX((e.touches?e.touches[0]:e).clientX);
+    e.preventDefault();
+  };
+  const move=e=>{ if(!state.seeking)return; scrubToClientX((e.touches?e.touches[0]:e).clientX); };
+  const up=()=>{ if(!state.seeking)return; state.seeking=false; s.classList.remove("drag"); };
+  s.addEventListener("mousedown",down);
+  window.addEventListener("mousemove",move);
+  window.addEventListener("mouseup",up);
+  s.addEventListener("touchstart",down,{passive:false});
+  window.addEventListener("touchmove",move,{passive:false});
+  window.addEventListener("touchend",up);
+  // keyboard: arrows nudge a day, shift = a year, Home/End jump
+  s.addEventListener("keydown",e=>{
+    const yr=DAYS_PER_YEAR, big=e.shiftKey?yr:Math.max(1,yr/30);
+    if(e.key==="ArrowLeft"){ state.isLive=false; state.playDay=clamp(state.playDay-big,state.oldestDay,state.liveDay); fetchFrame(Math.round(state.playDay)); e.preventDefault(); }
+    else if(e.key==="ArrowRight"){ state.playDay=clamp(state.playDay+big,state.oldestDay,state.liveDay); if(state.playDay>=state.liveDay-0.5)state.isLive=true; fetchFrame(Math.round(state.playDay)); e.preventDefault(); }
+    else if(e.key==="Home"){ state.isLive=false; state.playDay=state.oldestDay; fetchFrame(state.oldestDay); e.preventDefault(); }
+    else if(e.key==="End"){ goLive(); e.preventDefault(); }
+    paintScrubber(); paintTransport();
+  });
+}
+
+/* =========================================================================
+   6. PANELS — stats, faiths, chronicle, gallery
+   ========================================================================= */
+function renderPanels(j){
+  const s=j.stats||{};
+  // header
+  const liveY=yearOf(j.liveDay|0);
+  $("#liveDate").textContent = j.date || ("Year "+liveY);
+  $("#liveSub").textContent  = fmt(s.people)+" souls · "+fmt(s.events)+" events recorded";
+
+  // stat cards
+  const kids = (s.kids!=null) ? s.kids : Math.round((s.people||0)*0.24);
+  $("#stPeople").textContent = fmt(s.people);
+  $("#stKids").textContent   = fmt(kids);
+  $("#stPlants").textContent = fmt(s.plants);
+  $("#stTrees").textContent  = fmt(s.trees);
+  $("#stForest").textContent = (s.cover!=null? (s.cover*100).toFixed(1) : "—")+"%";
+  $("#stEvents").textContent = fmt(s.events);
+  $("#popNow").textContent   = fmt(s.people);
+
+  // charts
+  pushPopPoint(s.people);
+  updateCensus(s.species||[]);
+
+  // faiths
+  renderFaiths(j.faiths||[]);
+
+  // chronicle
+  renderChron(j.chron||[]);
+
+  // gallery
+  renderGallery(j.past||[]);
+}
+
+/* the live payload has no explicit child-count; approximate from species-less
+   data by a gentle heuristic so the sub-stat is never blank. If the server
+   later sends stats.kids, we use it verbatim (above). */
+function estimateKids(j){
+  const p=j.stats?.people||0; return Math.round(p*0.24);
+}
+
+function renderFaiths(faiths){
+  const live=faiths.filter(f=>(f.c|0)>0).sort((a,b)=>b.c-a.c);
+  const gone=faiths.filter(f=>(f.c|0)<=0).length;
+  const wrap=$("#faithList"); wrap.innerHTML="";
+  if(!live.length){ wrap.innerHTML='<div class="faith-gone">No faith yet holds a believer.</div>'; }
+  live.slice(0,7).forEach(f=>{
+    const row=document.createElement("div"); row.className="faith";
+    row.innerHTML=`<span class="fn">${esc(f.n)}</span>`+
+      `<span class="fc num">${fmt(f.c)}<small>faithful</small></span>`;
+    wrap.appendChild(row);
+  });
+  $("#faithGone").textContent = gone>0
+    ? `${gone} ${gone===1?"faith whose last believer is":"faiths whose last believers are"} gone.`
+    : "";
+}
+
+function renderChron(rows){
+  const feed=$("#chronFeed");
+  // newest first; keep the last 24
+  const list=[...rows].slice(-24).reverse();
+  feed.innerHTML="";
+  list.forEach((txt)=>{
+    const fresh=!state.seenChron.has(txt);
+    const row=document.createElement("div");
+    row.className="row"+(fresh?" fresh":"");
+    row.innerHTML=`<span class="tick"></span><span>${emph(esc(txt))}</span>`;
+    feed.appendChild(row);
+  });
+  rows.forEach(t=>state.seenChron.add(t));
+  if(state.seenChron.size>400){ // bound the set
+    state.seenChron=new Set([...state.seenChron].slice(-200));
+  }
+}
+
+function renderGallery(past){
+  const g=$("#gallery"); g.innerHTML="";
+  if(!past.length){ g.innerHTML='<div class="faith-gone">No worlds have ended yet. This is the first age.</div>'; return; }
+  past.forEach(w=>{
+    const card=document.createElement("div"); card.className="world-card";
+    const img=document.createElement("div"); img.className="thumb";
+    const im=new Image();
+    im.onload=()=>{ img.innerHTML=""; img.appendChild(im); };
+    im.onerror=()=>{ img.innerHTML='<div class="ph">◈</div>'; };
+    im.alt="World "+w.no; im.src="/archive/"+encodeURIComponent(w.base)+".png";
+    img.innerHTML='<div class="ph">◈</div>';
+    card.appendChild(img);
+    const meta=document.createElement("div"); meta.className="meta";
+    meta.innerHTML=`<div class="wn">World № ${fmt(w.no)}</div>`+
+      `<div class="wy num">ended in Year ${fmt(w.year)}</div>`+
+      `<div class="we num">${fmt(w.events)} events${w.seed?" · "+esc(w.seed):""}</div>`;
+    card.appendChild(meta);
+    const dl=document.createElement("a"); dl.className="save";
+    dl.href="/archive/"+encodeURIComponent(w.base)+".crn"; dl.download="";
+    dl.title="Download this world's save";
+    dl.innerHTML='<svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>';
+    card.appendChild(dl);
+    g.appendChild(card);
+  });
+}
+
+/* small text helpers */
+function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+/* bold proper-noun-ish first clause up to a comma, subtly, for the ticker */
+function emph(s){ return s.replace(/^([A-Z][^,.:;]{2,28})/, '<em>$1</em>'); }
+
+/* =========================================================================
+   7. HIGHCHARTS — themed to the parchment-ink palette
+   ========================================================================= */
+const CHART_INK="#a99c7c", CHART_LINE="rgba(216,203,168,0.08)";
+let popChart=null, censusChart=null;
+const popData=[]; // rolling population samples
+
+function themeCommon(){
+  return {
+    chart:{ backgroundColor:"transparent", style:{fontFamily:"var(--font)"},
+            spacing:[6,4,2,4], animation:{duration:400} },
+    title:{text:null}, credits:{enabled:false}, legend:{enabled:false},
+    tooltip:{
+      backgroundColor:"rgba(24,20,16,0.94)", borderColor:"rgba(217,180,100,0.35)",
+      borderRadius:8, borderWidth:1, shadow:false,
+      style:{color:"#d8cba8", fontSize:"12px"},
+      useHTML:false
+    }
+  };
+}
+function initCharts(){
+  if(typeof Highcharts==="undefined") return;
+  Highcharts.setOptions({ lang:{ thousandsSep:"," } });
+
+  popChart = Highcharts.chart("popChart", Object.assign(themeCommon(),{
+    chart:Object.assign(themeCommon().chart,{type:"areaspline",height:96}),
+    xAxis:{ visible:false },
+    yAxis:{ title:{text:null}, gridLineColor:CHART_LINE, gridLineWidth:1,
+            labels:{style:{color:"#6f6650",fontSize:"9px"}}, tickAmount:3, min:0 },
+    tooltip:Object.assign(themeCommon().tooltip,{
+      formatter:function(){ return "Year "+yearOf(this.x)+" · <b>"+fmt(this.y)+"</b> people"; }
+    }),
+    plotOptions:{ areaspline:{
+      lineWidth:2, lineColor:"#d9b464", marker:{enabled:false},
+      states:{hover:{lineWidth:2}},
+      fillColor:{ linearGradient:{x1:0,y1:0,x2:0,y2:1},
+        stops:[[0,"rgba(217,180,100,0.30)"],[1,"rgba(217,180,100,0.02)"]] }
+    }},
+    series:[{ name:"People", data:[] }]
+  }));
+
+  censusChart = Highcharts.chart("censusChart", Object.assign(themeCommon(),{
+    chart:Object.assign(themeCommon().chart,{type:"bar",height:150}),
+    xAxis:{ type:"category", lineColor:CHART_LINE, tickWidth:0,
+            labels:{style:{color:CHART_INK,fontSize:"10.5px"}} },
+    yAxis:{ visible:false, min:0 },
+    tooltip:Object.assign(themeCommon().tooltip,{
+      formatter:function(){ return "<b>"+esc(this.key)+"</b>: "+fmt(this.y); }
+    }),
+    plotOptions:{ bar:{
+      borderWidth:0, borderRadius:3, pointPadding:0.12, groupPadding:0.06,
+      color:{ linearGradient:{x1:0,y1:0,x2:1,y2:0},
+        stops:[[0,"rgba(195,173,223,0.55)"],[1,"rgba(195,173,223,0.9)"]] },
+      dataLabels:{ enabled:true, inside:false, align:"left",
+        style:{color:"#a99c7c",fontSize:"10px",fontWeight:"600",textOutline:"none"},
+        formatter:function(){ return fmt(this.y); } }
+    }},
+    series:[{ name:"Census", data:[] }]
+  }));
+}
+
+function pushPopPoint(v){
+  if(v==null||isNaN(v)) return;
+  const x=state.liveDay||popData.length;
+  // avoid duplicate x when the day hasn't advanced
+  if(popData.length && popData[popData.length-1][0]===x){ popData[popData.length-1][1]=v; }
+  else popData.push([x,v]);
+  while(popData.length>80) popData.shift();
+  if(popChart) popChart.series[0].setData(popData.slice(), true, false, false);
+}
+function updateCensus(species){
+  const top=[...species].filter(s=>s&&s.n).sort((a,b)=>(b.c|0)-(a.c|0)).slice(0,7);
+  const total=species.reduce((n,s)=>n+(s.c|0),0);
+  $("#censusTotal").textContent=fmt(total);
+  if(censusChart) censusChart.series[0].setData(top.map(s=>({name:s.n,y:s.c|0})),true,false,false);
+}
+
+/* =========================================================================
+   8. CAMERA — pan + zoom-at-cursor + drag/touch pan  (survives updates)
+   -------------------------------------------------------------------------
+   NOTE: If the paste-in renderer already installs its own pan/zoom on
+   #map, delete this block. It is written to be self-sufficient otherwise
+   and uses the same cam model the renderer expects.
+   ========================================================================= */
+function worldFromScreen(sx,sy){
+  const px=cam.cell;
+  return { x: cam.x + (sx - canvas.clientWidth/2)/px,
+           y: cam.y + (sy - canvas.clientHeight/2)/px };
+}
+function initCamera(){
+  const el=$("#map");
+  let dragging=false, lastX=0, lastY=0, pinchD=0;
+
+  el.addEventListener("wheel",e=>{
+    e.preventDefault();
+    const before=worldFromScreen(e.clientX,e.clientY);
+    const factor=Math.exp(-e.deltaY*0.0015);
+    cam.cell=clamp(cam.cell*factor, 2, 64);
+    const after=worldFromScreen(e.clientX,e.clientY);
+    cam.x += before.x-after.x; cam.y += before.y-after.y; // zoom at cursor
+    cam.follow=null;
+  },{passive:false});
+
+  el.addEventListener("mousedown",e=>{ dragging=true; lastX=e.clientX; lastY=e.clientY; cam.follow=null; });
+  window.addEventListener("mousemove",e=>{
+    if(!dragging)return;
+    cam.x-=(e.clientX-lastX)/cam.cell; cam.y-=(e.clientY-lastY)/cam.cell;
+    lastX=e.clientX; lastY=e.clientY;
+  });
+  window.addEventListener("mouseup",()=>dragging=false);
+
+  // touch: single-finger pan, two-finger pinch-zoom-at-midpoint
+  el.addEventListener("touchstart",e=>{
+    if(e.touches.length===1){ dragging=true; lastX=e.touches[0].clientX; lastY=e.touches[0].clientY; }
+    else if(e.touches.length===2){ dragging=false; pinchD=touchDist(e); }
+    cam.follow=null;
+  },{passive:true});
+  el.addEventListener("touchmove",e=>{
+    if(e.touches.length===1&&dragging){
+      cam.x-=(e.touches[0].clientX-lastX)/cam.cell; cam.y-=(e.touches[0].clientY-lastY)/cam.cell;
+      lastX=e.touches[0].clientX; lastY=e.touches[0].clientY;
+    }else if(e.touches.length===2){
+      const d=touchDist(e), mid=touchMid(e);
+      const before=worldFromScreen(mid.x,mid.y);
+      cam.cell=clamp(cam.cell*(d/(pinchD||d)),2,64); pinchD=d;
+      const after=worldFromScreen(mid.x,mid.y);
+      cam.x+=before.x-after.x; cam.y+=before.y-after.y;
+    }
+    e.preventDefault();
+  },{passive:false});
+  el.addEventListener("touchend",()=>{ dragging=false; pinchD=0; });
+}
+const touchDist=e=>Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
+const touchMid =e=>({x:(e.touches[0].clientX+e.touches[1].clientX)/2, y:(e.touches[0].clientY+e.touches[1].clientY)/2});
+
+/* =========================================================================
+   9. THE RENDER LOOP + canvas sizing
+   ========================================================================= */
+const canvas=$("#map"), ctx=canvas.getContext("2d");
+let DPR=Math.min(window.devicePixelRatio||1, 2);
+function resizeCanvas(){
+  DPR=Math.min(window.devicePixelRatio||1,2);
+  canvas.width=Math.floor(canvas.clientWidth*DPR);
+  canvas.height=Math.floor(canvas.clientHeight*DPR);
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener("resize",resizeCanvas);
+
+/* -------------------------------------------------------------------------
+   EXISTING RENDERER — keep this call site. I (the world author) paste the
+   real body in here; it reads the current frame `F` and camera `cam` and
+   draws the ASCII/pixel world onto ctx. Do not change the signature.
+   ------------------------------------------------------------------------- */
+const FF="-apple-system,system-ui,'SF Pro Text',sans-serif";
+const PAL={0:['#101c38',null],1:['#0a1226',null],2:['#5a7896','═'],3:['#78280a','^'],4:['#182c58','≈'],5:['#1a2e5a','~'],6:['#969caa','∙'],7:['#46424e','▲'],8:['#343039','▒'],9:['#3c2c14','≡'],10:['#342c22','∙'],11:['#242220','"'],12:['#1a2618','♠'],13:['#18221c','↑'],14:['#1e261a','τ'],15:['#142822','"'],16:['#242416','*'],17:['#1c2818','"'],18:['#1e2618',','],19:['#262016','.']};
+const FG={2:'#c8e1f5',3:'#ffaa3c',4:'#73a5eb',5:'#82b9f0',6:'#f4f6fc',7:'#f0f0f5',8:'#968aa0',9:'#e1c350',10:'#aa9678',11:'#69645f',12:'#73aa50',13:'#69875a',14:'#78965f',15:'#3c7850',16:'#8c915a',17:'#7da550',18:'#6e9655',19:'#695a41'};
+const AL=['h','d','b','w','B','m','h','c','f'];
+const AC=['#d2be96','#c8a06e','#966e50','#eb5a5a','#e66e3c','#e6e1d2','#be9664','#aa825a','#82b9d7'];
+const CUL=['#ffe878','#78dcff','#ff96dc','#a0ffa0','#ffb478'];
+const MK=['✕','‼','+','$','/'],MC=['#ff3c3c','#ff7828','#ffa0dc','#f0d25a','#c8aa78'];
+let camCentered=false;
+
+function drawWorld(F, cam, ctx){
+  const W=canvas.clientWidth,H=canvas.clientHeight;
+  ctx.clearRect(0,0,W,H);
+  if(!F||!F._cells)return;
+  if(!camCentered){cam.x=F.w/2;cam.y=F.h/2;camCentered=true;}
+  const z=cam.cell,cells=F._cells;
+  const w2sx=x=>(x-cam.x)*z+W/2,w2sy=y=>(y-cam.y)*z+H/2;
+  const ascii=z>=12;
+  const x0=Math.max(0,Math.floor(cam.x-W/2/z)-1),x1=Math.min(F.w-1,Math.ceil(cam.x+W/2/z)+1);
+  const y0=Math.max(0,Math.floor(cam.y-H/2/z)-1),y1=Math.min(F.h-1,Math.ceil(cam.y+H/2/z)+1);
+  const season=Math.floor((F.day%360)/90);
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const b=cells[y*F.w+x]||0,c=b&63;
+    const sx=w2sx(x),sy=w2sy(y),p=PAL[c]||PAL[19];
+    ctx.fillStyle=p[0];ctx.fillRect(sx,sy,z+1,z+1);
+    if(ascii&&p[1]){ctx.fillStyle=(c===9&&['#96783c','#bebe46','#e6c350','#8c7d5f'][season])||FG[c]||'#888';
+      ctx.font=Math.round(z*0.9)+'px ui-monospace,monospace';ctx.fillText(p[1],sx+z/2,sy+z/2);}}
+  for(const b of (F.buildings||[])){if(b.x<x0||b.x>x1||b.y<y0||b.y>y1)continue;const sx=w2sx(b.x),sy=w2sy(b.y);
+    const g=!b.r?['□','#828282']:b.p<100?['□','#c8aa6e']:[['⌂','#d2a05a'],['▦','#e6c878'],['†','#d2bea0'],['#','#bea578']][b.k]||['⌂','#d2a05a'];
+    if(ascii){ctx.fillStyle=g[1];ctx.font=Math.round(z*0.9)+'px ui-monospace,monospace';ctx.fillText(g[0],sx+z/2,sy+z/2);
+      if(z>=14&&b.s>0){ctx.fillStyle='#ffe8b4';ctx.font=Math.round(z*0.38)+'px ui-monospace,monospace';ctx.fillText(b.s,sx+z/2,sy+z*1.1);}}
+    else{ctx.fillStyle='#a87c46';ctx.fillRect(sx+z*0.1,sy+z*0.1,z*0.8,z*0.8);}}
+  for(const a of (F.animals||[])){if(a.x<x0||a.x>x1||a.y<y0||a.y>y1)continue;const sx=w2sx(a.x),sy=w2sy(a.y);
+    if(ascii){ctx.fillStyle=AC[a.s]||'#ccc';ctx.font=Math.round(z*0.9)+'px ui-monospace,monospace';ctx.fillText(AL[a.s]||'?',sx+z/2,sy+z/2);
+      if(z>=22){ctx.fillStyle='rgba(255,255,255,.75)';ctx.font=Math.round(z*0.3)+'px '+FF;ctx.fillText(a.a,sx+z/2,sy-z*0.15);}}
+    else{ctx.fillStyle=(a.s===3||a.s===4)?'#e15050':'#cdaf84';ctx.beginPath();ctx.arc(sx+z/2,sy+z/2,Math.max(1.4,z*0.28),0,7);ctx.fill();}}
+  for(const p of (F.people||[])){if(p.x<x0||p.x>x1||p.y<y0||p.y>y1)continue;const sx=w2sx(p.x),sy=w2sy(p.y);
+    if(ascii){ctx.fillStyle=CUL[p.c%5];ctx.font=Math.round(z*0.9)+'px ui-monospace,monospace';ctx.fillText(p.k?'•':'☺',sx+z/2,sy+z/2);
+      if(z>=20){ctx.fillStyle='#fff';ctx.font=Math.round(z*0.34)+'px '+FF;ctx.fillText(p.n+' — '+p.a,sx+z/2,sy-z*0.2);}}
+    else{ctx.fillStyle='#fcf06e';ctx.beginPath();ctx.arc(sx+z/2,sy+z/2,Math.max(1.8,z*0.34),0,7);ctx.fill();}}
+  for(const m of (F.marks||[])){if(m.x<x0||m.x>x1||m.y<y0||m.y>y1)continue;const sx=w2sx(m.x),sy=w2sy(m.y);
+    ctx.fillStyle=MC[m.t];ctx.font=Math.max(10,z*0.7)+'px ui-monospace,monospace';ctx.fillText(MK[m.t],sx+z*0.8,sy+z*0.2);}
+  ctx.fillStyle='#fff';ctx.font='13px '+FF;
+  for(const st of (F.setts||[])){const sx=w2sx(st.x),sy=w2sy(st.y-2);ctx.fillText(st.n,sx,sy);}
+}
+
+function frameLoop(now){
+  const dt=Math.min(0.05,(now-state.lastT)/1000); state.lastT=now;
+  tickDVR(dt);
+  drawWorld(state.frame, cam, ctx);
+  requestAnimationFrame(frameLoop);
+}
+
+/* =========================================================================
+   10. WIRING + BOOT
+   ========================================================================= */
+function initUI(){
+  $("#pauseBtn").onclick = togglePause;
+  $("#liveBtn").onclick   = goLive;
+  $("#drawerToggle").onclick = ()=> $("#inspector").classList.toggle("open");
+
+  // global keyboard: space = pause/play, L = live
+  window.addEventListener("keydown",e=>{
+    if(e.target.matches("input,textarea"))return;
+    if(e.code==="Space"){ togglePause(); e.preventDefault(); }
+    else if(e.key==="l"||e.key==="L"){ goLive(); }
+  });
+
+  // fade the hint after a moment
+  setTimeout(()=>{ const h=$("#hint"); if(h) h.style.opacity="0"; }, 6000);
+  $("#map").addEventListener("pointerdown",()=>{ const h=$("#hint"); if(h) h.style.opacity="0"; },{once:true});
+}
+
+function boot(){
+  resizeCanvas();
+  initCamera();
+  initUI();
+  buildTransport();
+  initScrub();
+  initCharts();
+  paintTransport();
+
+  // seed with sample data instantly, then start polling the real server
+  applyLive(sampleLive());
+  fetchFrame(state.liveDay);
+  paintScrubber();
+
+  pollLive();
+  setInterval(pollLive, 2000);
+
+  requestAnimationFrame(frameLoop);
+}
+
+if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",boot);
+else boot();
+</script>
+</body>
+</html>

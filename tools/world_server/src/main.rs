@@ -28,139 +28,7 @@ fn seed_for_epoch(genesis: u64, epoch: u64) -> u64 {
 
 /// The live-stream client: a canvas renderer over /state.json — wheel-zoom at the cursor,
 /// drag-pan, glyph view when close, all camera state preserved across the 5-second live poll.
-const LIVE_HTML: &str = r##"<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Chronica — live</title>
-<style>
-body{margin:0;background:#0c0a08;color:#cfc4a6;font-family:Georgia,serif;overflow:hidden}
-#map{position:fixed;inset:0;cursor:grab}
-#hud{position:fixed;top:0;left:0;right:0;padding:7px 14px;background:rgba(12,10,8,.9);display:flex;gap:14px;align-items:center;font-size:13px;z-index:3;flex-wrap:wrap}
-#hud b{color:#e8dcbc;font-size:16px;letter-spacing:2px}
-.btn{cursor:pointer;border:1px solid #4a3d30;background:#1a1510;color:#cfc4a6;padding:2px 9px;border-radius:4px;font-size:12px}
-.btn.on{background:#5a4a2a;color:#ffe8b4;border-color:#8a6a3a}
-.dl{color:#e8dcbc;text-decoration:none;border:1px solid #5a4a3a;padding:2px 9px;border-radius:4px}
-#scrub{flex:1;min-width:180px;height:8px;background:#241d15;border-radius:4px;position:relative;cursor:pointer}
-#buf{position:absolute;height:100%;background:#3a3020;border-radius:4px}
-#head{position:absolute;top:-3px;width:3px;height:14px;background:#e0455a;border-radius:2px}
-#side{position:fixed;top:74px;right:0;bottom:0;width:310px;background:rgba(12,10,8,.9);padding:12px 16px;overflow-y:auto;font-size:12.5px;line-height:1.5;z-index:2}
-#side h2{font-size:13px;color:#b9a2d6;margin:12px 0 3px} #side ul{margin:0;padding-left:16px}
-.small{color:#8d8065;font-size:12px} #side a{color:#b9a2d6}
-#chron li{color:#a8b6a0}
-#now{color:#e8dcbc} .behind{color:#d0a24a}
-</style></head><body>
-<canvas id="map"></canvas>
-<div id="hud">
-<b>CHRONICA</b>
-<span class="btn" id="pp">❚❚</span>
-<span class="btn spd" data-s="2">2</span><span class="btn spd" data-s="10">10</span>
-<span class="btn spd" data-s="30">30</span><span class="btn spd" data-s="90">90</span>
-<span class="btn spd" data-s="360">1yr/s</span>
-<span class="btn" id="livebtn">⏭ LIVE</span>
-<div id="scrub"><div id="buf"></div><div id="head"></div></div>
-<span id="watch" class="small"></span>
-<a class="dl" href="/download/current" download>⬇ world</a>
-</div>
-<div id="side"></div>
-<script>
-const cv=document.getElementById('map'),ctx=cv.getContext('2d');
-let F=null,M=null,cells=null;
-let cam={x:96,y:64,z:7};
-// DVR playback state
-let mode='live';           // 'live' | 'play'
-let dps=30;                // playback days-per-second when playing
-let playDay=0, oldest=0, live=0;
-let shownDay=-1, fetching=false, lastFetch=0;
-const PAL={0:['#101c38',null],1:['#0a1226',null],2:['#5a7896','═'],3:['#78280a','^'],4:['#182c58','≈'],5:['#1a2e5a','~'],6:['#969caa','∙'],7:['#46424e','▲'],8:['#343039','▒'],9:['#3c2c14','≡'],10:['#342c22','∙'],11:['#242220','"'],12:['#1a2618','♠'],13:['#18221c','↑'],14:['#1e261a','τ'],15:['#142822','"'],16:['#242416','*'],17:['#1c2818','"'],18:['#1e2618',','],19:['#262016','.']};
-const FG={2:'#c8e1f5',3:'#ffaa3c',4:'#73a5eb',5:'#82b9f0',6:'#f4f6fc',7:'#f0f0f5',8:'#968aa0',9:'#e1c350',10:'#aa9678',11:'#69645f',12:'#73aa50',13:'#69875a',14:'#78965f',15:'#3c7850',16:'#8c915a',17:'#7da550',18:'#6e9655',19:'#695a41'};
-const AL=['h','d','b','w','B','m','h','c','f'];
-const AC=['#d2be96','#c8a06e','#966e50','#eb5a5a','#e66e3c','#e6e1d2','#be9664','#aa825a','#82b9d7'];
-const CUL=['#ffe878','#78dcff','#ff96dc','#a0ffa0','#ffb478'];
-const MK=['✕','‼','+','$','/'],MC=['#ff3c3c','#ff7828','#ffa0dc','#f0d25a','#c8aa78'];
-function rs(){cv.width=innerWidth;cv.height=innerHeight}addEventListener('resize',rs);rs();
-function w2s(x,y){return[(x-cam.x)*cam.z+cv.width/2,(y-cam.y)*cam.z+cv.height/2]}
-function s2w(px,py){return[(px-cv.width/2)/cam.z+cam.x,(py-cv.height/2)/cam.z+cam.y]}
-cv.addEventListener('wheel',e=>{e.preventDefault();const[wx,wy]=s2w(e.clientX,e.clientY);
- cam.z=Math.min(48,Math.max(2.5,cam.z*(e.deltaY<0?1.12:0.89)));
- const[nx,ny]=s2w(e.clientX,e.clientY);cam.x+=wx-nx;cam.y+=wy-ny;},{passive:false});
-let drag=null;
-cv.addEventListener('mousedown',e=>{drag=[e.clientX,e.clientY];cv.style.cursor='grabbing'});
-addEventListener('mouseup',()=>{drag=null;cv.style.cursor='grab'});
-addEventListener('mousemove',e=>{if(drag){cam.x-=(e.clientX-drag[0])/cam.z;cam.y-=(e.clientY-drag[1])/cam.z;drag=[e.clientX,e.clientY]}});
-cv.addEventListener('touchstart',e=>{if(e.touches.length==1)drag=[e.touches[0].clientX,e.touches[0].clientY]},{passive:true});
-cv.addEventListener('touchmove',e=>{if(drag&&e.touches.length==1){const t=e.touches[0];cam.x-=(t.clientX-drag[0])/cam.z;cam.y-=(t.clientY-drag[1])/cam.z;drag=[t.clientX,t.clientY]}},{passive:true});
-// controls
-document.getElementById('pp').onclick=()=>{mode=(mode==='pause')?'play':'pause';syncbtn()};
-document.getElementById('livebtn').onclick=()=>{mode='live';syncbtn()};
-document.querySelectorAll('.spd').forEach(b=>b.onclick=()=>{dps=+b.dataset.s;mode='play';if(playDay<oldest)playDay=oldest;syncbtn()});
-document.getElementById('scrub').onclick=e=>{const r=e.currentTarget.getBoundingClientRect();
- const f=(e.clientX-r.left)/r.width;playDay=oldest+f*(live-oldest);mode='play';syncbtn()};
-function syncbtn(){document.getElementById('pp').textContent=mode==='pause'?'▶':'❚❚';
- document.getElementById('livebtn').classList.toggle('on',mode==='live');
- document.querySelectorAll('.spd').forEach(b=>b.classList.toggle('on',mode==='play'&&+b.dataset.s===dps));}
-async function pollMeta(){try{const r=await fetch('/live.json',{cache:'no-store'});M=await r.json();
- oldest=M.oldestDay;live=M.liveDay;if(mode==='live'||playDay>live)playDay=live;if(playDay<oldest)playDay=oldest;
- sidebar();}catch(e){}setTimeout(pollMeta,2000)}
-async function fetchFrame(day){if(fetching)return;const now=performance.now();if(now-lastFetch<70)return;
- fetching=true;lastFetch=now;
- try{const r=await fetch('/frame?day='+Math.round(day),{cache:'no-store'});const f=await r.json();
-  if(f&&f.cells){F=f;const bin=atob(f.cells);cells=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)cells[i]=bin.charCodeAt(i);shownDay=f.day}}catch(e){}
- fetching=false}
-let prevT=performance.now();
-function loop(t){requestAnimationFrame(loop);const dt=(t-prevT)/1000;prevT=t;
- if(mode==='live'){playDay=live}
- else if(mode==='play'){playDay+=dps*dt;if(playDay>=live){playDay=live;mode='live';syncbtn()}if(playDay<oldest)playDay=oldest}
- // fetch the frame nearest the play head when it moves off the shown one
- if(Math.abs(playDay-shownDay)>=2)fetchFrame(playDay);
- draw();hud();}
-function hud(){const w=document.getElementById('watch');if(!M)return;
- const wy=Math.floor(playDay/360),ly=Math.floor(live/360),beh=ly-wy;
- const bufpct=live>oldest?((playDay-oldest)/(live-oldest)*100):100;
- document.getElementById('buf').style.width='100%';
- document.getElementById('head').style.left=bufpct+'%';
- w.innerHTML='watching <span id="now">Year '+wy+'</span> · live Year '+ly+(beh>0?' <span class="behind">(−'+beh+'y)</span>':' <span class="on" style="color:#e0455a">●LIVE</span>');}
-function draw(){if(!F||!cells)return;
- ctx.fillStyle='#0c0a08';ctx.fillRect(0,0,cv.width,cv.height);
- const z=cam.z,W=F.w,H=F.h,ascii=z>=12;
- const x0=Math.max(0,Math.floor(cam.x-cv.width/2/z)-1),x1=Math.min(W-1,Math.ceil(cam.x+cv.width/2/z)+1);
- const y0=Math.max(0,Math.floor(cam.y-cv.height/2/z)-1),y1=Math.min(H-1,Math.ceil(cam.y+cv.height/2/z)+1);
- const season=Math.floor((F.day%360)/90);
- for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const b=cells[y*W+x],c=b&63;
-  const[sx,sy]=w2s(x,y);const p=PAL[c]||PAL[19];
-  ctx.fillStyle=p[0];ctx.fillRect(sx,sy,z+1,z+1);
-  if(ascii&&p[1]){ctx.fillStyle=(c==9&&[['#96783c','#bebe46','#e6c350','#8c7d5f'][season]])||FG[c]||'#888';
-   ctx.font=Math.round(z*0.9)+'px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(p[1],sx+z/2,sy+z/2);}}
- for(const b of F.buildings){if(b.x<x0||b.x>x1||b.y<y0||b.y>y1)continue;const[sx,sy]=w2s(b.x,b.y);
-  const g=!b.r?['□','#828282']:b.p<100?['□','#c8aa6e']:[['⌂','#d2a05a'],['▦','#e6c878'],['†','#d2bea0'],['#','#bea578']][b.k]||['⌂','#d2a05a'];
-  if(ascii){ctx.fillStyle=g[1];ctx.font=Math.round(z*0.9)+'px monospace';ctx.fillText(g[0],sx+z/2,sy+z/2);
-   if(z>=14&&b.s>0){ctx.fillStyle='#ffe8b4';ctx.font=Math.round(z*0.38)+'px monospace';ctx.fillText(b.s,sx+z/2,sy+z*1.1)}}
-  else{ctx.fillStyle='#a87c46';ctx.fillRect(sx+z*0.1,sy+z*0.1,z*0.8,z*0.8)}}
- for(const a of F.animals){if(a.x<x0||a.x>x1||a.y<y0||a.y>y1)continue;const[sx,sy]=w2s(a.x,a.y);
-  if(ascii){ctx.fillStyle=AC[a.s]||'#ccc';ctx.font=Math.round(z*0.9)+'px monospace';ctx.fillText(AL[a.s]||'?',sx+z/2,sy+z/2);
-   if(z>=22){ctx.fillStyle='rgba(255,255,255,.75)';ctx.font=Math.round(z*0.3)+'px Georgia';ctx.fillText(a.a,sx+z/2,sy-z*0.15)}}
-  else{ctx.fillStyle=(a.s==3||a.s==4)?'#e15050':'#cdaf84';ctx.beginPath();ctx.arc(sx+z/2,sy+z/2,Math.max(1.4,z*0.28),0,7);ctx.fill()}}
- for(const p of F.people){if(p.x<x0||p.x>x1||p.y<y0||p.y>y1)continue;const[sx,sy]=w2s(p.x,p.y);
-  if(ascii){ctx.fillStyle=CUL[p.c%5];ctx.font=Math.round(z*0.9)+'px monospace';ctx.fillText(p.k?'•':'☺',sx+z/2,sy+z/2);
-   if(z>=20){ctx.fillStyle='#fff';ctx.font=Math.round(z*0.34)+'px Georgia';ctx.fillText(p.n+' — '+p.a,sx+z/2,sy-z*0.2)}}
-  else{ctx.fillStyle='#fcf06e';ctx.beginPath();ctx.arc(sx+z/2,sy+z/2,Math.max(1.8,z*0.34),0,7);ctx.fill()}}
- for(const m of F.marks){if(m.x<x0||m.x>x1||m.y<y0||m.y>y1)continue;const[sx,sy]=w2s(m.x,m.y);
-  ctx.fillStyle=MC[m.t];ctx.font=Math.max(10,z*0.7)+'px monospace';ctx.textAlign='center';ctx.fillText(MK[m.t],sx+z*0.8,sy+z*0.2)}
- ctx.textAlign='center';for(const st of F.setts){const[sx,sy]=w2s(st.x,st.y-2);ctx.fillStyle='#fff';ctx.font='13px Georgia';ctx.fillText(st.n,sx,sy)}
-}
-function sidebar(){if(!M)return;const sd=document.getElementById('side');let h='';
- h+='<div class="small">the world lives at full speed; you watch at yours</div>';
- h+='<h2>The world now — '+M.date+'</h2><ul><li><b>People: '+M.stats.people+'</b></li>';
- for(const s of M.stats.species)if(s.c>0)h+='<li>'+s.n+': '+s.c+'</li>';
- h+='<li>Plants: '+M.stats.plants+' ('+M.stats.trees+' trees, '+Math.round(M.stats.cover*100)+'% forest)</li></ul>';
- const ex=M.stats.species.filter(s=>s.c==0).map(s=>s.n);
- if(ex.length)h+='<div class="small">gone: '+ex.join(', ')+'</div>';
- const fs=M.faiths.filter(f=>f.c>0),fg=M.faiths.length-fs.length;
- h+='<h2>Faiths</h2><ul>'+fs.map(f=>'<li>'+f.n+': '+f.c+'</li>').join('')+(fg?'<li class="small">…and '+fg+' whose last believer is gone</li>':'')+'</ul>';
- h+='<h2>The chronicle</h2><ul id="chron">'+M.chron.map(c=>'<li>'+c+'</li>').join('')+'</ul>';
- h+='<div class="small">events since this world began: '+M.stats.events+'</div>';
- if(M.past.length){h+='<h2>Worlds that were</h2><ul>'+M.past.map(p=>'<li>World '+p.no+' · yr '+p.year+' · '+p.events+' events<br><a href="/archive/'+p.base+'.png">portrait</a> · <a href="/archive/'+p.base+'.crn" download>⬇ save</a></li>').join('')+'</ul>'}
- sd.innerHTML=h}
-syncbtn();pollMeta();requestAnimationFrame(loop);
-</script></body></html>"##;
+const LIVE_HTML: &str = include_str!("viewer.html");
 
 fn main() {
     let mut seed = 1u64;
@@ -739,6 +607,7 @@ fn render_meta(sim: &Sim, oldest: u64, newest: u64) -> String {
         "date": sim.clock.date_string(), "liveDay": sim.clock.day,
         "oldestDay": oldest, "newestDay": newest,
         "stats": {"people": chronica_engine::humans::population(sim),
+                   "kids": sim.humans.list.iter().filter(|h| h.alive && (sim.clock.day as i64 - h.born) < 14*360).count(),
                    "species": species_counts, "plants": live_plants,
                    "trees": trees, "cover": cover, "events": sim.history.events.len()},
         "faiths": faiths, "past": past, "chron": chron
