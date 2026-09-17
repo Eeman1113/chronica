@@ -8,7 +8,7 @@
 One simulation mode. Everything individually represented, persistently simulated, causally
 connected. Derived statistics are observations. The renderer owns no state. Deterministic under
 threads and save/load. Optimize layout and scheduling, never truth. (Full rules: rebuild
-directive §2; condensed in CLAUDE.md.)
+directive §2.)
 
 ## Workspace layout
 

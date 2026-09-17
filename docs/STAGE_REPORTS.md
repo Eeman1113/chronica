@@ -183,8 +183,7 @@ renders) — pass. Full suite: 15/15 green. Forbidden-pattern grep (`if year ==`
 `start_war`, `generate_legend`, `possible_world_events`, drama lists): zero hits in engine/src.
 
 **Rules audit:** Formal markets/prices/currencies are NOT implemented (no fake): goods exist as
-real stores and carried loads; trade/prices remain for the economy build-out documented in
-CLAUDE.md open items. Wars-of-armies likewise: conflict currently expresses as raids/feuds at
+real stores and carried loads; trade/prices remain for the economy build-out (open items above). Wars-of-armies likewise: conflict currently expresses as raids/feuds at
 band scale — armies await larger societies. Nothing pretends otherwise.
 
 **Next:** Stage 7 renderer (egui over the inspection API), then Stage 8 benchmarks.

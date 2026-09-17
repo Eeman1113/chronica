@@ -130,8 +130,8 @@ animals, full hydrology and fire; complete world saves are ~10 MB; details in
 
 ## Honest state of the world
 
-The engine is complete through all eight stages, but two things are open (tracked in
-[`CLAUDE.md`](CLAUDE.md) and the Stage 4 report):
+The engine is complete through all eight stages, but two things are open (tracked in the
+[stage reports](docs/STAGE_REPORTS.md), see Stage 4):
 
 1. **Human lineages don't yet persist for centuries.** Founding bands live, build, marry, teach,
    believe, and raise children — but most seeds decline within a decade (winter/spring food
