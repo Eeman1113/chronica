@@ -29,7 +29,7 @@ fn seed_for_epoch(genesis: u64, epoch: u64) -> u64 {
 /// The live-stream client: a canvas renderer over /state.json — wheel-zoom at the cursor,
 /// drag-pan, glyph view when close, all camera state preserved across the 5-second live poll.
 const LIVE_HTML: &str = include_str!("viewer.html");
-
+const FAVICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#241a14"/><rect x="1.5" y="1.5" width="29" height="29" rx="6" fill="none" stroke="#4a3d2a" stroke-width="1"/><text x="16" y="23" font-size="21" text-anchor="middle" fill="#d9b464" font-family="Georgia, serif">◈</text></svg>"##;
 fn main() {
     let mut seed = 1u64;
     let mut port = 80u16;
@@ -153,6 +153,11 @@ fn main() {
                         )
                         .unwrap(),
                     )
+            } else if url.starts_with("/favicon") {
+                tiny_http::Response::from_data(FAVICON.as_bytes().to_vec()).with_header(
+                    tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"image/svg+xml"[..])
+                        .unwrap(),
+                )
             } else if url.starts_with("/frame") {
                 // the nearest recorded frame to ?day=D (default: newest)
                 let want: Option<u64> = url
