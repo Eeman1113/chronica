@@ -299,7 +299,7 @@ fn main() {
             let new_view = render_view(&sim);
             *view.write().unwrap() = new_view;
         }
-        if since_save >= 180 {
+        if since_save >= 60 {
             since_save = 0;
             // alternate files so a crash mid-write can never eat the world
             let tmp = save_path.with_extension("crn.tmp");
