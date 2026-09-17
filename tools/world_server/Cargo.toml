@@ -7,3 +7,5 @@ edition.workspace = true
 chronica-engine = { path = "../../engine" }
 tiny_http = "0.12"
 png = "0.17"
+serde_json = "1"
+base64 = "0.22"

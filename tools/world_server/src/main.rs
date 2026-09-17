@@ -12,6 +12,7 @@ use std::sync::{Arc, RwLock};
 struct View {
     png: Vec<u8>,
     html: String,
+    state: String,
 }
 
 /// The seed chain: each world's seed is derived from the last — unique, never repeating,
@@ -23,6 +24,102 @@ fn seed_for_epoch(genesis: u64, epoch: u64) -> u64 {
     }
     s
 }
+
+
+/// The live-stream client: a canvas renderer over /state.json — wheel-zoom at the cursor,
+/// drag-pan, glyph view when close, all camera state preserved across the 5-second live poll.
+const LIVE_HTML: &str = r##"<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chronica — live</title>
+<style>
+body{margin:0;background:#0c0a08;color:#cfc4a6;font-family:Georgia,serif;overflow:hidden}
+#map{position:fixed;inset:0;cursor:grab}
+#hud{position:fixed;top:0;left:0;right:0;padding:8px 14px;background:rgba(12,10,8,.85);display:flex;gap:16px;align-items:baseline;font-size:14px;z-index:2}
+#hud b{color:#e8dcbc;font-size:17px;letter-spacing:2px}
+.live{color:#e0455a;font-weight:bold} .live::before{content:"●";animation:p 1.4s infinite}
+@keyframes p{50%{opacity:.25}}
+#side{position:fixed;top:44px;right:0;bottom:0;width:320px;background:rgba(12,10,8,.88);padding:12px 16px;overflow-y:auto;font-size:12.5px;line-height:1.55;z-index:2}
+#side h2{font-size:13px;color:#b9a2d6;margin:12px 0 3px} #side ul{margin:0;padding-left:16px}
+#side .small{color:#8d8065} #side a{color:#b9a2d6}
+#chron li{color:#a8b6a0}
+#hint{position:fixed;bottom:10px;left:14px;color:#8d8065;font-size:12px;z-index:2}
+</style></head><body>
+<canvas id="map"></canvas>
+<div id="hud"><b>CHRONICA</b><span id="date"></span><span class="live"> LIVE</span><span id="pop"></span><span class="small" style="margin-left:auto">scroll = zoom · drag = pan · <a href="/classic" style="color:#8d8065">classic</a></span></div>
+<div id="side"></div>
+<div id="hint">the world persists whether or not this page is open</div>
+<script>
+const cv=document.getElementById('map'),ctx=cv.getContext('2d');
+let S=null,cells=null;
+let cam={x:96,y:64,z:7};
+const PAL={0:['#101c38',null],1:['#0a1226',null],2:['#5a7896','═'],3:['#78280a','^'],4:['#182c58','≈'],5:['#1a2e5a','~'],6:['#969caa','∙'],7:['#46424e','▲'],8:['#343039','▒'],9:['#3c2c14','≡'],10:['#342c22','∙'],11:['#242220','"'],12:['#1a2618','♠'],13:['#18221c','↑'],14:['#1e261a','τ'],15:['#142822','"'],16:['#242416','*'],17:['#1c2818','"'],18:['#1e2618',','],19:['#262016','.']};
+const FG={2:'#c8e1f5',3:'#ffaa3c',4:'#73a5eb',5:'#82b9f0',6:'#f4f6fc',7:'#f0f0f5',8:'#968aa0',9:'#e1c350',10:'#aa9678',11:'#69645f',12:'#73aa50',13:'#69875a',14:'#78965f',15:'#3c7850',16:'#8c915a',17:'#7da550',18:'#6e9655',19:'#695a41'};
+const SEASONCOL={9:{0:'#96783c',1:'#bebe46',2:'#e6c350',3:'#8c7d5f'}};
+const AL=['h','d','b','w','B','m','h','c','f'];
+const AC=['#d2be96','#c8a06e','#966e50','#eb5a5a','#e66e3c','#e6e1d2','#be9664','#aa825a','#82b9d7'];
+const CUL=['#ffe878','#78dcff','#ff96dc','#a0ffa0','#ffb478'];
+const MK=['✕','‼','+','$','/'],MC=['#ff3c3c','#ff7828','#ffa0dc','#f0d25a','#c8aa78'];
+function rs(){cv.width=innerWidth;cv.height=innerHeight}addEventListener('resize',rs);rs();
+function w2s(x,y){return[(x-cam.x)*cam.z+cv.width/2,(y-cam.y)*cam.z+cv.height/2]}
+function s2w(px,py){return[(px-cv.width/2)/cam.z+cam.x,(py-cv.height/2)/cam.z+cam.y]}
+cv.addEventListener('wheel',e=>{e.preventDefault();const[wx,wy]=s2w(e.clientX,e.clientY);
+ cam.z=Math.min(48,Math.max(2.5,cam.z*(e.deltaY<0?1.12:0.89)));
+ const[nx,ny]=s2w(e.clientX,e.clientY);cam.x+=wx-nx;cam.y+=wy-ny;},{passive:false});
+let drag=null;
+cv.addEventListener('mousedown',e=>{drag=[e.clientX,e.clientY];cv.style.cursor='grabbing'});
+addEventListener('mouseup',()=>{drag=null;cv.style.cursor='grab'});
+addEventListener('mousemove',e=>{if(drag){cam.x-=(e.clientX-drag[0])/cam.z;cam.y-=(e.clientY-drag[1])/cam.z;drag=[e.clientX,e.clientY]}});
+cv.addEventListener('touchstart',e=>{if(e.touches.length==1)drag=[e.touches[0].clientX,e.touches[0].clientY]},{passive:true});
+cv.addEventListener('touchmove',e=>{if(drag&&e.touches.length==1){const t=e.touches[0];cam.x-=(t.clientX-drag[0])/cam.z;cam.y-=(t.clientY-drag[1])/cam.z;drag=[t.clientX,t.clientY]}},{passive:true});
+async function poll(){try{const r=await fetch('/state.json',{cache:'no-store'});S=await r.json();
+ const bin=atob(S.cells);cells=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)cells[i]=bin.charCodeAt(i);
+ document.getElementById('date').textContent=S.date;
+ document.getElementById('pop').textContent='· people '+S.stats.people+' · events '+S.stats.events;
+ side();}catch(e){}setTimeout(poll,5000)}
+function side(){const sd=document.getElementById('side');let h='';
+ h+='<h2>The living</h2><ul><li><b>People: '+S.stats.people+'</b></li>';
+ for(const s of S.stats.species)if(s.c>0)h+='<li>'+s.n+': '+s.c+'</li>';
+ h+='<li>Plants: '+S.stats.plants+' ('+S.stats.trees+' trees, '+Math.round(S.stats.cover*100)+'% forest)</li></ul>';
+ const ex=S.stats.species.filter(s=>s.c==0).map(s=>s.n);
+ if(ex.length)h+='<div class="small">gone from the world: '+ex.join(', ')+'</div>';
+ h+='<h2>Settlements</h2><ul>'+(S.setts.length?S.setts.map(s=>'<li>'+s.n+' ('+s.x+','+s.y+')</li>').join(''):'<li class="small">none yet bears a name</li>')+'</ul>';
+ const fs=S.faiths.filter(f=>f.c>0),fg=S.faiths.length-fs.length;
+ h+='<h2>Faiths</h2><ul>'+fs.map(f=>'<li>'+f.n+': '+f.c+' faithful</li>').join('')+(fg?'<li class="small">…and '+fg+' whose last believer is gone</li>':'')+'</ul>';
+ h+='<h2>The chronicle</h2><ul id="chron">'+S.chron.map(c=>'<li>'+c+'</li>').join('')+'</ul>';
+ if(S.past.length){h+='<h2>Worlds that were</h2><ul>'+S.past.map(p=>'<li>World '+p.no+' — ended year '+p.year+' — '+p.events+' events — <a href="/archive/'+p.base+'.png">portrait</a></li>').join('')+'</ul>'}
+ sd.innerHTML=h}
+function draw(){requestAnimationFrame(draw);if(!S||!cells)return;
+ ctx.fillStyle='#0c0a08';ctx.fillRect(0,0,cv.width,cv.height);
+ const z=cam.z,W=S.w,H=S.h,ascii=z>=12;
+ const x0=Math.max(0,Math.floor(cam.x-cv.width/2/z)-1),x1=Math.min(W-1,Math.ceil(cam.x+cv.width/2/z)+1);
+ const y0=Math.max(0,Math.floor(cam.y-cv.height/2/z)-1),y1=Math.min(H-1,Math.ceil(cam.y+cv.height/2/z)+1);
+ const season=Math.floor(S.day%360/90);
+ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const b=cells[y*W+x],c=b&63;
+  const[sx,sy]=w2s(x,y);const p=PAL[c]||PAL[19];
+  ctx.fillStyle=p[0];ctx.fillRect(sx,sy,z+1,z+1);
+  if(ascii&&p[1]){ctx.fillStyle=(c==9&&SEASONCOL[9][season])||FG[c]||'#888';
+   ctx.font=Math.round(z*0.9)+'px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+   ctx.fillText(p[1],sx+z/2,sy+z/2);}}
+ for(const b of S.buildings){if(b.x<x0||b.x>x1||b.y<y0||b.y>y1)continue;const[sx,sy]=w2s(b.x,b.y);
+  const g=!b.r?['□','#828282']:b.p<100?['□','#c8aa6e']:[['⌂','#d2a05a'],['▦','#e6c878'],['†','#d2be a0'],['#','#be a578']][b.k]||['⌂','#d2a05a'];
+  if(ascii){ctx.fillStyle=g[1].replace(/ /g,'');ctx.font=Math.round(z*0.9)+'px monospace';ctx.fillText(g[0],sx+z/2,sy+z/2);
+   if(z>=14&&b.s>0){ctx.fillStyle='#ffe8b4';ctx.font=Math.round(z*0.38)+'px monospace';ctx.fillText(b.s,sx+z/2,sy+z*1.1)}}
+  else{ctx.fillStyle='#a87c46';ctx.fillRect(sx+z*0.1,sy+z*0.1,z*0.8,z*0.8)}}
+ for(const a of S.animals){if(a.x<x0||a.x>x1||a.y<y0||a.y>y1)continue;const[sx,sy]=w2s(a.x,a.y);
+  if(ascii){ctx.fillStyle=AC[a.s]||'#ccc';ctx.font=Math.round(z*0.9)+'px monospace';ctx.fillText(AL[a.s]||'?',sx+z/2,sy+z/2);
+   if(z>=22){ctx.fillStyle='rgba(255,255,255,.75)';ctx.font=Math.round(z*0.3)+'px Georgia';ctx.fillText(a.a,sx+z/2,sy-z*0.15)}}
+  else{ctx.fillStyle=(a.s==3||a.s==4)?'#e15050':'#cdaf84';ctx.beginPath();ctx.arc(sx+z/2,sy+z/2,Math.max(1.4,z*0.28),0,7);ctx.fill()}}
+ for(const p of S.people){if(p.x<x0||p.x>x1||p.y<y0||p.y>y1)continue;const[sx,sy]=w2s(p.x,p.y);
+  if(ascii){ctx.fillStyle=CUL[p.c%5];ctx.font=Math.round(z*0.9)+'px monospace';ctx.fillText(p.k?'•':'☺',sx+z/2,sy+z/2);
+   if(z>=20){ctx.fillStyle='#fff';ctx.font=Math.round(z*0.34)+'px Georgia';ctx.fillText(p.n+' — '+p.a,sx+z/2,sy-z*0.2)}}
+  else{ctx.fillStyle='#fcf06e';ctx.beginPath();ctx.arc(sx+z/2,sy+z/2,Math.max(1.8,z*0.34),0,7);ctx.fill()}}
+ for(const m of S.marks){if(m.x<x0||m.x>x1||m.y<y0||m.y>y1)continue;const[sx,sy]=w2s(m.x,m.y);
+  ctx.fillStyle=MC[m.t];ctx.font=Math.max(10,z*0.7)+'px monospace';ctx.fillText(MK[m.t],sx+z*0.8,sy+z*0.2)}
+ ctx.textAlign='center';
+ for(const st of S.setts){const[sx,sy]=w2s(st.x,st.y-2);ctx.fillStyle='#fff';ctx.font='13px Georgia';ctx.fillText(st.n,sx,sy)}
+}
+poll();draw();
+</script></body></html>"##;
 
 fn main() {
     let mut seed = 1u64;
@@ -69,7 +166,7 @@ fn main() {
     // when did the last creature die? (u64::MAX = life persists)
     let mut doomsday: u64 = u64::MAX;
 
-    let view = Arc::new(RwLock::new(View { png: Vec::new(), html: String::new() }));
+    let view = Arc::new(RwLock::new(View { png: Vec::new(), html: String::new(), state: String::new() }));
     {
         let mut v = view.write().unwrap();
         *v = render_view(&sim);
@@ -103,13 +200,29 @@ fn main() {
                 } else {
                     tiny_http::Response::from_data(b"gone".to_vec())
                 }
+            } else if url.starts_with("/state.json") {
+                tiny_http::Response::from_data(v.state.clone().into_bytes()).with_header(
+                    tiny_http::Header::from_bytes(
+                        &b"Content-Type"[..],
+                        &b"application/json"[..],
+                    )
+                    .unwrap(),
+                )
+            } else if url.starts_with("/classic") {
+                tiny_http::Response::from_data(v.html.clone().into_bytes()).with_header(
+                    tiny_http::Header::from_bytes(
+                        &b"Content-Type"[..],
+                        &b"text/html; charset=utf-8"[..],
+                    )
+                    .unwrap(),
+                )
             } else if url.starts_with("/map.png") {
                 tiny_http::Response::from_data(v.png.clone()).with_header(
                     tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"image/png"[..])
                         .unwrap(),
                 )
             } else {
-                tiny_http::Response::from_data(v.html.clone().into_bytes()).with_header(
+                tiny_http::Response::from_data(LIVE_HTML.as_bytes().to_vec()).with_header(
                     tiny_http::Header::from_bytes(
                         &b"Content-Type"[..],
                         &b"text/html; charset=utf-8"[..],
@@ -203,7 +316,239 @@ fn main() {
 }
 
 fn render_view(sim: &Sim) -> View {
-    View { png: render_png(sim), html: render_html(sim) }
+    View { png: render_png(sim), html: render_html(sim), state: render_state(sim) }
+}
+
+/// One cell, classified for the client renderer (mirror of the desktop glyph logic).
+fn classify_cell(sim: &Sim, i: usize) -> (u8, u8) {
+    let g = &sim.grid;
+    let shade = ((chronica_engine::core::rng::splitmix64(i as u64) >> 32) % 4) as u8;
+    if g.ocean[i] {
+        return (if g.elev[i] < -0.45 { 1 } else { 0 }, shade);
+    }
+    if g.ice_bears(i) {
+        return (2, shade);
+    }
+    if g.burning[i] > 0 {
+        return (3, shade);
+    }
+    if g.surface[i] > 0.12 {
+        return (4, shade); // flood/lake
+    }
+    if g.is_river(i) {
+        return (5, shade);
+    }
+    if g.snow[i] > 0.02 {
+        return (6, shade);
+    }
+    if g.elev[i] > 1.02 {
+        return (7, shade);
+    }
+    if g.elev[i] > 0.82 {
+        return (8, shade);
+    }
+    if g.crop_cover.get(i).copied().unwrap_or(0.0) > 0.05 {
+        return (9, shade); // field
+    }
+    if g.is_path(i) {
+        return (10, shade);
+    }
+    if g.burn_scar[i] > 0.3 {
+        return (11, shade);
+    }
+    // dominant plant
+    let (mut oak, mut pine, mut reed, mut shrub, mut grass) = (0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    if let Some(pids) = sim.plants.by_cell.get(i) {
+        for &pi in pids {
+            let pl = &sim.plants.list[pi as usize];
+            if !pl.alive {
+                continue;
+            }
+            match pl.species {
+                chronica_engine::species::SP_OAK => oak += pl.biomass,
+                chronica_engine::species::SP_PINE => pine += pl.biomass,
+                chronica_engine::species::SP_REED => reed += pl.biomass,
+                chronica_engine::species::SP_SCRUB => shrub += pl.biomass,
+                chronica_engine::species::SP_WHEAT => {}
+                _ => grass += pl.biomass,
+            }
+        }
+    }
+    if oak > 1.2 || pine > 1.2 {
+        return (if pine > oak { 13 } else { 12 }, shade);
+    }
+    if oak + pine > 0.25 {
+        return (14, shade);
+    }
+    if reed > 0.15 {
+        return (15, shade);
+    }
+    if shrub > 0.25 {
+        return (16, shade);
+    }
+    if grass > 0.5 {
+        return (17, shade);
+    }
+    if grass > 0.10 {
+        return (18, shade);
+    }
+    (19, shade)
+}
+
+fn render_state(sim: &Sim) -> String {
+    use base64::Engine as _;
+    use chronica_engine::core::ids::EntityRef as ER;
+    use chronica_engine::history::EventKind as EK;
+    let g = &sim.grid;
+    let n = g.n();
+    let mut cells = Vec::with_capacity(n);
+    for i in 0..n {
+        let (c, sh) = classify_cell(sim, i);
+        cells.push(c | (sh << 6));
+    }
+    let cells_b64 = base64::engine::general_purpose::STANDARD.encode(&cells);
+
+    let day = sim.clock.day;
+    let people: Vec<serde_json::Value> = sim
+        .humans
+        .list
+        .iter()
+        .filter(|h| h.alive)
+        .map(|h| {
+            let doing = match h.current {
+                chronica_engine::humans::HumanAction::Gather => "gathering",
+                chronica_engine::humans::HumanAction::Drink { .. } => "going to water",
+                chronica_engine::humans::HumanAction::EatStored => "eating",
+                chronica_engine::humans::HumanAction::Hunt { .. } => "hunting!",
+                chronica_engine::humans::HumanAction::ChopWood => "chopping wood",
+                chronica_engine::humans::HumanAction::Build { .. } => "building",
+                chronica_engine::humans::HumanAction::Deposit => "storing food",
+                chronica_engine::humans::HumanAction::Socialize { .. } => "talking",
+                chronica_engine::humans::HumanAction::Court { .. } => "courting",
+                chronica_engine::humans::HumanAction::TendFarm => "farming",
+                chronica_engine::humans::HumanAction::PreserveFood => "smoking food",
+                chronica_engine::humans::HumanAction::Rest => "resting",
+                chronica_engine::humans::HumanAction::Flee { .. } => "fleeing!",
+                chronica_engine::humans::HumanAction::MoveTo { .. } => "walking",
+                chronica_engine::humans::HumanAction::Idle => "idling",
+            };
+            let child = (day as i64 - h.born) < 14 * 360;
+            serde_json::json!({"x":h.x,"y":h.y,"n":h.name,"c":h.culture,"a":doing,"k":child})
+        })
+        .collect();
+    let animals: Vec<serde_json::Value> = sim
+        .animals
+        .list
+        .iter()
+        .filter(|a| a.alive)
+        .map(|a| {
+            let doing = match a.rationale.chosen {
+                0 => "fleeing!",
+                1 => "to water",
+                2 => "grazing",
+                3 => "hunting!",
+                4 => "courting",
+                5 => "with herd",
+                6 => "resting",
+                _ => "roaming",
+            };
+            serde_json::json!({"x":a.x,"y":a.y,"s":a.species,"a":doing,"t":!a.tamed_by.is_none()})
+        })
+        .collect();
+    let buildings: Vec<serde_json::Value> = sim
+        .objects
+        .buildings
+        .iter()
+        .filter(|b| b.exists || b.progress >= 1.0)
+        .map(|b| {
+            let (x, y) = g.xy(b.cell as usize);
+            let k = match b.kind {
+                chronica_engine::objects::BuildingKind::Hut => 0,
+                chronica_engine::objects::BuildingKind::Granary => 1,
+                chronica_engine::objects::BuildingKind::Hall => 2,
+                chronica_engine::objects::BuildingKind::Palisade => 3,
+            };
+            serde_json::json!({"x":x,"y":y,"k":k,"p":(b.progress*100.0) as u32,
+                "r":b.exists,"s":(b.food_store+b.preserved_store) as u32})
+        })
+        .collect();
+    let setts: Vec<serde_json::Value> = chronica_engine::society::living_settlements(sim)
+        .into_iter()
+        .map(|(nm, (x, y))| serde_json::json!({"n":nm,"x":x,"y":y}))
+        .collect();
+    // recent marks
+    let mut marks = Vec::new();
+    for ev in sim.history.events.iter().rev().take(600) {
+        if day.saturating_sub(ev.day) > 3 {
+            break;
+        }
+        let Some(loc) = ev.loc else { continue };
+        let (x, y) = g.xy(loc as usize);
+        let t = match &ev.kind {
+            EK::Killed { .. } => 0,
+            EK::RaidCarriedOut { .. } => 1,
+            EK::Born { .. } => 2,
+            EK::HarvestedFood { .. } => 3,
+            EK::FelledTree { .. } => 4,
+            _ => continue,
+        };
+        marks.push(serde_json::json!({"x":x,"y":y,"t":t}));
+    }
+    // stats + chronicle + faiths + past worlds (client renders panels)
+    let notable = |ev: &chronica_engine::history::Event| -> bool {
+        let human = matches!(ev.subject, ER::Person(_));
+        match &ev.kind {
+            EK::PlantDied { .. } => false,
+            EK::Born { .. } | EK::Died { .. } | EK::Mated { .. } | EK::Ate { .. } => human,
+            EK::Killed { by } => human || matches!(by, ER::Person(_)),
+            EK::LightningStrike | EK::FireDied => false,
+            _ => true,
+        }
+    };
+    let mut chron = Vec::new();
+    for ev in sim.history.events.iter().rev() {
+        if notable(ev) {
+            chron.push(inspection::describe(sim, ev));
+            if chron.len() >= 30 {
+                break;
+            }
+        }
+    }
+    let mut species_counts = Vec::new();
+    for (nm, c) in chronica_engine::animals::population_by_species(sim) {
+        species_counts.push(serde_json::json!({"n":nm,"c":c}));
+    }
+    let (live_plants, trees, cover) = chronica_engine::vegetation::forest_stats(sim);
+    let faiths: Vec<serde_json::Value> = chronica_engine::society::belief_clusters(sim)
+        .into_iter()
+        .map(|(nm, c)| serde_json::json!({"n":nm,"c":c}))
+        .collect();
+    let past: Vec<serde_json::Value> = std::fs::read_to_string("/var/lib/chronica/worlds.log")
+        .unwrap_or_default()
+        .lines()
+        .rev()
+        .take(50)
+        .filter_map(|l| {
+            let p: Vec<&str> = l.split('\t').collect();
+            if p.len() >= 5 {
+                Some(serde_json::json!({"no":p[0],"seed":p[1],"year":p[2],"events":p[3],"base":p[4]}))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    serde_json::json!({
+        "w": g.w, "h": g.h, "day": day, "date": sim.clock.date_string(),
+        "cells": cells_b64,
+        "people": people, "animals": animals, "buildings": buildings,
+        "setts": setts, "marks": marks, "chron": chron,
+        "stats": {"people": chronica_engine::humans::population(sim),
+                   "species": species_counts, "plants": live_plants,
+                   "trees": trees, "cover": cover, "events": sim.history.events.len()},
+        "faiths": faiths, "past": past
+    })
+    .to_string()
 }
 
 fn render_png(sim: &Sim) -> Vec<u8> {
