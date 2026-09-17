@@ -111,6 +111,12 @@ impl Grid {
         m
     }
 
+    /// Water a swimmer can cross (not open sea, not bottomless flood). Deeper than this and
+    /// only the ocean stops you; between wading-depth and this, you swim.
+    #[inline]
+    pub fn swimmable(&self, i: usize) -> bool {
+        !self.ocean[i] && self.surface[i] > 0.12 && self.surface[i] <= 1.2
+    }
     /// Thick ice bears weight: winter roads across water (and thin-ice danger at the thaw).
     #[inline]
     pub fn ice_bears(&self, i: usize) -> bool {

@@ -150,6 +150,7 @@ pub struct Human {
     pub last_birth_day: i64,  // for the postpartum recovery window (-1 = never)
     pub pregnancies: u16,     // how many she has carried
     pub carrying_twins: bool,
+    pub swim_days: u16, // consecutive days spent swimming — exhaustion drowns the overtired
     // economy
     pub carried_food: f32,
     pub seed_genes: Option<[f32; 2]>, // the strain you saved seed from — selection in action
@@ -263,6 +264,7 @@ impl Humans {
             last_birth_day: -1,
             pregnancies: 0,
             carrying_twins: false,
+            swim_days: 0,
             carried_food: 0.5,
             seed_genes: None,
             carried_water: 4.0,
@@ -982,13 +984,18 @@ fn move_toward_h(sim: &mut Sim, hi: usize, to: (i32, i32), steps: i32) {
             (h.x + dir.0, h.y + dir.1)
         };
         match sim.grid.idx(nx, ny) {
-            Some(j)
-                if !sim.grid.ocean[j]
-                    && (sim.grid.surface[j] <= 0.12 || sim.grid.ice_bears(j)) =>
-            {
+            Some(j) if !sim.grid.ocean[j] && (sim.grid.surface[j] <= 0.12 || sim.grid.ice_bears(j)) => {
                 let h = &mut sim.humans.list[hi];
                 h.x = nx;
                 h.y = ny;
+            }
+            Some(j) if sim.grid.swimmable(j) => {
+                let h = &mut sim.humans.list[hi];
+                h.x = nx;
+                h.y = ny;
+                h.fatigue = (h.fatigue + 0.35).min(1.5);
+                h.swim_days = h.swim_days.saturating_add(1);
+                break;
             }
             _ => break,
         }

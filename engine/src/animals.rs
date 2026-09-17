@@ -905,6 +905,14 @@ fn move_animal_toward(sim: &mut Sim, ai: usize, to: (i32, i32), steps: i32) {
                 a.x = nx;
                 a.y = ny;
             }
+            // a land animal can swim a river or flood to cross it — tiring, one stroke per step
+            Some(j) if !aquatic && sim.grid.swimmable(j) => {
+                let a = &mut sim.animals.list[ai];
+                a.x = nx;
+                a.y = ny;
+                a.fatigue = (a.fatigue + 0.3).min(1.5);
+                break;
+            }
             _ => break,
         }
     }
@@ -922,6 +930,13 @@ fn move_animal(sim: &mut Sim, ai: usize, dir: (i32, i32), steps: i32) {
                 let a = &mut sim.animals.list[ai];
                 a.x = nx;
                 a.y = ny;
+            }
+            Some(j) if !aquatic && sim.grid.swimmable(j) => {
+                let a = &mut sim.animals.list[ai];
+                a.x = nx;
+                a.y = ny;
+                a.fatigue = (a.fatigue + 0.3).min(1.5);
+                break;
             }
             _ => break,
         }
