@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["engine", "tools/sim_runner", "tools/world_inspector", "tools/replay"]
+members = ["engine", "tools/sim_runner", "tools/world_inspector", "tools/replay", "renderer"]
 
 [workspace.package]
 version = "0.1.0"

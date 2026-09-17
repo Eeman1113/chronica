@@ -172,3 +172,28 @@ CLAUDE.md open items. Wars-of-armies likewise: conflict currently expresses as r
 band scale — armies await larger societies. Nothing pretends otherwise.
 
 **Next:** Stage 7 renderer (egui over the inspection API), then Stage 8 benchmarks.
+
+---
+
+## STAGE 7 — Renderer
+
+**Done:** `renderer/` (separate crate, `chronica-renderer`): eframe/egui application over the
+inspection API only. Map texture from real grid state (ocean, derived rivers/lakes, vegetation
+cover, snow, active fire, burn scars); entities drawn from real positions (people, herbivores,
+predators, buildings); derived settlement labels. Click-to-inspect: cell panel (elevation,
+temperature, plant moisture, surface/groundwater, soil, the actual plants growing there),
+person panel (needs, current action, the recorded decision rationale, techniques, bonds,
+memories count, biography derived from events), animal panel (genes, generation, rationale).
+Live chronicle panel: last 40 events in generated chronicle voice; clicking an event renders its
+"why?" chain. Run/pause/speed control; new-world-from-seed.
+
+**Verified by:** builds clean (rustc 1.98 via rustup — Homebrew's 1.86 was too old for eframe;
+engine re-tested 15/15 under 1.98); 10-second live smoke run stays up. The engine builds and
+tests fully headless without the renderer crate (workspace member, not a feature of the engine).
+
+**Rules audit:** the renderer holds the Sim and calls `tick()`, but contains zero writes to any
+entity or grid field — all drawing goes through public read access and `inspection`. No
+observation signal enters the engine anywhere (Test H holds architecturally: there is no code
+path by which looking can change state).
+
+**Next:** Stage 8 — benchmarks + PERFORMANCE.md numbers + final acceptance checklist.

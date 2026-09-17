@@ -1,0 +1,8 @@
+[package]
+name = "chronica-renderer"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+chronica-engine = { path = "../engine" }
+eframe = "0.31"
