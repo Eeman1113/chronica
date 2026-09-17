@@ -345,27 +345,44 @@ impl eframe::App for App {
                         let Some(i) = g.idx(cx, cy) else { continue };
                         let center = to_screen(cx as f32 + 0.5, cy as f32 + 0.5);
                         // choose glyph + colors from TRUE state
+                        // deterministic per-cell variant for glyph texture (prototype style)
+                        let vh = chronica_engine::core::rng::splitmix64(i as u64);
+                        let v = (vh % 4) as usize;
+                        let season = self.sim.clock.season();
+                        use chronica_engine::core::clock::Season;
+                        let lat = ((cy as f32 / g.h as f32) - 0.5).abs() * 2.0;
                         let (ch, fg, bg): (&str, egui::Color32, egui::Color32) = if g.ocean[i] {
-                            ("≈", egui::Color32::from_rgb(60, 100, 170), egui::Color32::from_rgb(14, 26, 52))
+                            if g.elev[i] < -0.45 {
+                                (["≈", "~", "≈", "≈"][v], egui::Color32::from_rgb(40, 70, 130), egui::Color32::from_rgb(10, 18, 40))
+                            } else {
+                                (["~", "≈", "~", "≈"][v], egui::Color32::from_rgb(70, 110, 180), egui::Color32::from_rgb(16, 30, 60))
+                            }
                         } else if g.surface[i] > 0.12 {
-                            ("≈", egui::Color32::from_rgb(110, 160, 230), egui::Color32::from_rgb(24, 44, 88))
+                            if g.is_river(i) {
+                                (["≈", "~", "≈", "~"][v], egui::Color32::from_rgb(130, 185, 245), egui::Color32::from_rgb(26, 46, 90))
+                            } else {
+                                (["~", "≈", "≈", "~"][v], egui::Color32::from_rgb(115, 165, 235), egui::Color32::from_rgb(24, 44, 88))
+                            }
                         } else if g.is_river(i) {
-                            ("~", egui::Color32::from_rgb(120, 180, 240), egui::Color32::from_rgb(26, 46, 90))
+                            (["≈", "~", "~", "≈"][v], egui::Color32::from_rgb(130, 185, 245), egui::Color32::from_rgb(26, 46, 90))
                         } else if g.burning[i] > 0 {
-                            ("^", egui::Color32::from_rgb(255, 170, 60), egui::Color32::from_rgb(120, 40, 10))
+                            (["^", "▲", "*", "^"][v], egui::Color32::from_rgb(255, 170, 60), egui::Color32::from_rgb(120, 40, 10))
                         } else if g.snow[i] > 0.02 {
-                            ("∙", egui::Color32::from_rgb(240, 244, 250), egui::Color32::from_rgb(120, 128, 145))
-                        } else if g.elev[i] > 0.85 {
-                            ("▲", egui::Color32::from_rgb(150, 145, 140), egui::Color32::from_rgb(52, 50, 48))
+                            (["·", "∙", ".", "∙"][v], egui::Color32::from_rgb(244, 246, 252), egui::Color32::from_rgb(150, 156, 170))
+                        } else if g.elev[i] > 1.02 {
+                            (["▲", "△", "▲", "▲"][v], egui::Color32::from_rgb(240, 240, 245), egui::Color32::from_rgb(70, 66, 78))
+                        } else if g.elev[i] > 0.82 {
+                            (["▒", "▲", "▒", "▒"][v], egui::Color32::from_rgb(150, 138, 155), egui::Color32::from_rgb(52, 48, 58))
                         } else if g.burn_scar[i] > 0.3 {
-                            ("%", egui::Color32::from_rgb(120, 100, 80), egui::Color32::from_rgb(40, 34, 28))
+                            (["\"", "·", "τ", "·"][v], egui::Color32::from_rgb(105, 100, 95), egui::Color32::from_rgb(36, 34, 32))
                         } else {
-                            // dominant living plant in this cell decides the glyph
-                            let mut tree_b = 0.0f32;
-                            let mut tree_sp = 2u8;
-                            let mut crop = false;
-                            let mut herb_b = 0.0f32;
+                            // living ground: what actually grows here decides the glyph
+                            let mut oak_b = 0.0f32;
+                            let mut pine_b = 0.0f32;
+                            let mut reed_b = 0.0f32;
+                            let mut crop_b = 0.0f32;
                             let mut shrub_b = 0.0f32;
+                            let mut grass_b = 0.0f32;
                             if let Some(pids) = self.sim.plants.by_cell.get(i) {
                                 for &pi in pids {
                                     let pl = &self.sim.plants.list[pi as usize];
@@ -373,40 +390,58 @@ impl eframe::App for App {
                                         continue;
                                     }
                                     match pl.species {
-                                        chronica_engine::species::SP_WHEAT => crop = true,
-                                        chronica_engine::species::SP_OAK
-                                        | chronica_engine::species::SP_PINE => {
-                                            if pl.biomass > tree_b {
-                                                tree_b = pl.biomass;
-                                                tree_sp = pl.species;
-                                            }
-                                        }
+                                        chronica_engine::species::SP_OAK => oak_b += pl.biomass,
+                                        chronica_engine::species::SP_PINE => pine_b += pl.biomass,
+                                        chronica_engine::species::SP_REED => reed_b += pl.biomass,
+                                        chronica_engine::species::SP_WHEAT => crop_b += pl.biomass,
                                         chronica_engine::species::SP_SCRUB => shrub_b += pl.biomass,
-                                        _ => herb_b += pl.biomass,
+                                        _ => grass_b += pl.biomass,
                                     }
                                 }
                             }
-                            let soil_bg = egui::Color32::from_rgb(38, 32, 22);
-                            if crop {
-                                ("≡", egui::Color32::from_rgb(225, 195, 80), egui::Color32::from_rgb(60, 48, 20))
-                            } else if tree_b > 1.5 {
-                                if tree_sp == chronica_engine::species::SP_PINE {
-                                    ("↑", egui::Color32::from_rgb(70, 140, 90), egui::Color32::from_rgb(18, 36, 24))
+                            if crop_b > 0.05 {
+                                // field through the year: plowed / growing / harvest / stubble
+                                let (fc, fch) = match season {
+                                    Season::Spring => (egui::Color32::from_rgb(150, 120, 70), "="),
+                                    Season::Summer => (egui::Color32::from_rgb(190, 175, 70), "≡"),
+                                    Season::Autumn => (egui::Color32::from_rgb(230, 195, 80), "≡"),
+                                    Season::Winter => (egui::Color32::from_rgb(140, 125, 95), "∙"),
+                                };
+                                (fch, fc, egui::Color32::from_rgb(56, 44, 22))
+                            } else if oak_b > 1.2 || pine_b > 1.2 {
+                                if pine_b > oak_b {
+                                    // taiga conifers hold their grey-green all year
+                                    (["↑", "Λ", "↑", "↑"][v], egui::Color32::from_rgb(105, 135, 110), egui::Color32::from_rgb(24, 34, 28))
                                 } else {
-                                    ("♠", egui::Color32::from_rgb(90, 170, 80), egui::Color32::from_rgb(20, 40, 22))
+                                    // broadleaf forest turns with the seasons
+                                    let fc = match season {
+                                        Season::Autumn => egui::Color32::from_rgb(215, 140, 55),
+                                        Season::Winter => egui::Color32::from_rgb(130, 125, 115),
+                                        _ => egui::Color32::from_rgb(115, 150, 75),
+                                    };
+                                    (["♣", "♠", "♠", "♣"][v], fc, egui::Color32::from_rgb(26, 38, 24))
                                 }
-                            } else if tree_b > 0.3 {
-                                ("τ", egui::Color32::from_rgb(110, 160, 90), egui::Color32::from_rgb(26, 38, 24))
-                            } else if shrub_b > 0.3 {
-                                ("*", egui::Color32::from_rgb(150, 160, 90), egui::Color32::from_rgb(34, 36, 22))
-                            } else if herb_b > 0.5 {
-                                ("\"", egui::Color32::from_rgb(120, 180, 90), egui::Color32::from_rgb(28, 42, 24))
-                            } else if herb_b > 0.12 {
-                                (",", egui::Color32::from_rgb(110, 150, 85), egui::Color32::from_rgb(30, 38, 24))
-                            } else if herb_b > 0.02 {
-                                ("·", egui::Color32::from_rgb(120, 120, 80), soil_bg)
+                            } else if oak_b + pine_b > 0.25 {
+                                ("τ", egui::Color32::from_rgb(120, 150, 95), egui::Color32::from_rgb(30, 38, 26))
+                            } else if reed_b > 0.15 {
+                                (["\"", "~", "τ", "\""][v], egui::Color32::from_rgb(60, 120, 80), egui::Color32::from_rgb(20, 40, 34))
+                            } else if shrub_b > 0.25 {
+                                (["\"", ";", "·", ";"][v], egui::Color32::from_rgb(140, 145, 80), egui::Color32::from_rgb(36, 36, 24))
+                            } else if grass_b > 0.10 {
+                                let gc = if grass_b > 0.5 {
+                                    egui::Color32::from_rgb(125, 165, 80)
+                                } else {
+                                    egui::Color32::from_rgb(110, 140, 70)
+                                };
+                                (["·", ".", ",", "'"][v], gc, egui::Color32::from_rgb(30, 40, 25))
+                            } else if g.plant_moisture(i) < 0.18 && g.temp[i] > 18.0 {
+                                // desert: hot and truly dry
+                                (["·", "~", ".", "·"][v], egui::Color32::from_rgb(200, 175, 130), egui::Color32::from_rgb(60, 50, 34))
+                            } else if lat > 0.72 {
+                                // tundra: cold bare ground
+                                (["·", ",", ".", "·"][v], egui::Color32::from_rgb(165, 175, 160), egui::Color32::from_rgb(48, 52, 48))
                             } else {
-                                (".", egui::Color32::from_rgb(105, 90, 65), soil_bg)
+                                (["·", ".", ".", "·"][v], egui::Color32::from_rgb(130, 112, 82), egui::Color32::from_rgb(38, 32, 22))
                             }
                         };
                         let cell_rect = egui::Rect::from_center_size(
@@ -451,14 +486,14 @@ impl eframe::App for App {
                 let p = to_screen(a.x as f32 + 0.5, a.y as f32 + 0.5);
                 if ascii {
                     let (ch, col) = match a.species {
-                        chronica_engine::species::A_HARE => ("h", egui::Color32::from_rgb(210, 190, 150)),
+                        chronica_engine::species::A_HARE => ("r", egui::Color32::from_rgb(210, 190, 150)),
                         chronica_engine::species::A_DEER => ("d", egui::Color32::from_rgb(200, 160, 110)),
                         chronica_engine::species::A_BOAR => ("b", egui::Color32::from_rgb(150, 110, 80)),
                         chronica_engine::species::A_WOLF => ("w", egui::Color32::from_rgb(235, 90, 90)),
                         chronica_engine::species::A_BEAR => ("B", egui::Color32::from_rgb(230, 110, 60)),
-                        chronica_engine::species::A_SHEEP => ("s", egui::Color32::from_rgb(230, 225, 210)),
-                        chronica_engine::species::A_HORSE => ("H", egui::Color32::from_rgb(190, 150, 100)),
-                        _ => ("A", egui::Color32::from_rgb(170, 130, 90)),
+                        chronica_engine::species::A_SHEEP => ("m", egui::Color32::from_rgb(230, 225, 210)),
+                        chronica_engine::species::A_HORSE => ("h", egui::Color32::from_rgb(190, 150, 100)),
+                        _ => ("c", egui::Color32::from_rgb(170, 130, 90)),
                     };
                     painter.text(
                         p,
@@ -495,7 +530,44 @@ impl eframe::App for App {
                     );
                 }
             }
-            // ---------- people: @ ----------
+            // ---------- carcasses: grey letters fading as they rot ----------
+            if ascii {
+                for c in self.sim.animals.corpses.iter().filter(|c| !c.gone) {
+                    let (x, y) = self.sim.grid.xy(c.cell as usize);
+                    if !visible(x, y) {
+                        continue;
+                    }
+                    let ch = match c.species {
+                        chronica_engine::species::A_HARE => "r",
+                        chronica_engine::species::A_DEER => "d",
+                        chronica_engine::species::A_BOAR => "b",
+                        chronica_engine::species::A_WOLF => "w",
+                        chronica_engine::species::A_BEAR => "B",
+                        chronica_engine::species::A_SHEEP => "m",
+                        chronica_engine::species::A_HORSE => "h",
+                        _ => "c",
+                    };
+                    let rot = ((self.sim.clock.day - c.day) as f32 / 30.0).clamp(0.0, 1.0);
+                    let grey = (150.0 - rot * 90.0) as u8;
+                    let pos = to_screen(x as f32 + 0.5, y as f32 + 0.5);
+                    painter.text(
+                        pos,
+                        egui::Align2::CENTER_CENTER,
+                        ch,
+                        egui::FontId::monospace(self.zoom * 0.85),
+                        egui::Color32::from_rgb(grey, grey, grey),
+                    );
+                    // the strike through the carcass
+                    painter.line_segment(
+                        [
+                            pos + egui::vec2(-self.zoom * 0.3, 0.0),
+                            pos + egui::vec2(self.zoom * 0.3, 0.0),
+                        ],
+                        egui::Stroke::new(1.5, egui::Color32::from_rgb(grey, grey, grey)),
+                    );
+                }
+            }
+            // ---------- people: ☺ villagers, • children ----------
             for h in self.sim.humans.list.iter().filter(|h| h.alive) {
                 if !visible(h.x, h.y) {
                     continue;
@@ -509,10 +581,12 @@ impl eframe::App for App {
                         egui::Color32::from_rgb(160, 255, 160),
                         egui::Color32::from_rgb(255, 180, 120),
                     ][(h.culture as usize) % 5];
+                    let age_y = (self.sim.clock.day as i64 - h.born) as f32 / 360.0;
+                    let glyph = if age_y < 14.0 { "•" } else { "☺" };
                     painter.text(
                         p,
                         egui::Align2::CENTER_CENTER,
-                        "@",
+                        glyph,
                         egui::FontId::monospace(self.zoom * 0.95),
                         cul_col,
                     );
