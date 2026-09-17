@@ -684,6 +684,7 @@ impl eframe::App for App {
                         chronica_engine::species::A_BEAR => ("B", egui::Color32::from_rgb(230, 110, 60)),
                         chronica_engine::species::A_SHEEP => ("m", egui::Color32::from_rgb(230, 225, 210)),
                         chronica_engine::species::A_HORSE => ("h", egui::Color32::from_rgb(190, 150, 100)),
+                        chronica_engine::species::A_FISH => ("\u{223e}", egui::Color32::from_rgb(130, 185, 215)),
                         _ => ("c", egui::Color32::from_rgb(170, 130, 90)),
                     };
                     painter.text(

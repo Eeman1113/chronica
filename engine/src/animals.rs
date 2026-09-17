@@ -163,8 +163,8 @@ pub fn generate(sim: &mut Sim) {
     {
         let mut placed = 0;
         for i in 0..sim.grid.n() {
-            if sim.grid.is_fresh_water(i) && sim.grid.surface[i] > 0.06 {
-                if rng.chance(0.45) {
+            if sim.grid.is_river(i) || sim.grid.is_lake(i) {
+                if rng.chance(0.5) {
                     let (x, y) = sim.grid.xy(i);
                     let back = rng.range_i(0, (7.0f32 * 360.0 * 0.5) as i64);
                     sim.animals.spawn(
@@ -530,22 +530,20 @@ pub fn tick(sim: &mut Sim) {
             continue;
         }
         let here = sim.grid.idx(x, y);
-        let depth_here = here.map(|j| sim.grid.surface[j]).unwrap_or(0.0);
-        // fish follow the falling water: when the shallows shrink, swim for the deep
-        if depth_here < 0.06 {
+        let habitable_here = here.map(|j| wet_enough(sim, j)).unwrap_or(false);
+        // stranded by the falling water? make for the nearest true river or lake
+        if !habitable_here {
             let mut best: Option<((i32, i32), f32)> = None;
-            for r in 1..=3i32 {
+            for r in 1..=4i32 {
                 for dy in -r..=r {
                     for dx in -r..=r {
                         if dx.abs() != r && dy.abs() != r {
                             continue;
                         }
                         if let Some(j) = sim.grid.idx(x + dx, y + dy) {
-                            if !sim.grid.ocean[j] {
+                            if wet_enough(sim, j) {
                                 let d = sim.grid.surface[j];
-                                if d > depth_here + 0.02
-                                    && best.map(|(_, bd)| d > bd).unwrap_or(true)
-                                {
+                                if best.map(|(_, bd)| d > bd).unwrap_or(true) {
                                     best = Some(((x + dx, y + dy), d));
                                 }
                             }
@@ -576,7 +574,7 @@ pub fn tick(sim: &mut Sim) {
                 a.days_thirsty += 1;
             }
         }
-        if sim.animals.list[ai].days_thirsty > 6 {
+        if sim.animals.list[ai].days_thirsty > 1 {
             kill_animal(
                 sim,
                 ai,
@@ -872,7 +870,10 @@ fn edible_at_g(sim: &Sim, cell: usize) -> f32 {
 /// Deep water is no place for a land animal (floods are real and must be fled).
 #[inline]
 fn wet_enough(sim: &Sim, j: usize) -> bool {
-    sim.grid.surface[j] > 0.02 && !sim.grid.ocean[j]
+    // a fish can swim in a river, a lake, or a genuine flood — but NOT a thin meltwater film
+    // over the forest floor. When the flood drains below this depth the fish is stranded.
+    !sim.grid.ocean[j]
+        && (sim.grid.is_river(j) || sim.grid.is_lake(j) || sim.grid.surface[j] > 0.05)
 }
 
 #[inline]
