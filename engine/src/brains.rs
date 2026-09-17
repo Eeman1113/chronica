@@ -21,6 +21,8 @@ pub struct Percepts {
     pub mate_dist: i32,
     pub herd_center: Option<(i32, i32)>,
     pub carrion_near: Option<u32>, // corpse index
+    pub human_prey: Option<u32>,   // a person, to a desperate enough predator
+    pub human_prey_dist: i32,
     pub fire_near: bool,
 }
 
@@ -31,6 +33,7 @@ pub enum Action {
     Graze,                      // eat plants in current cell
     MoveToForage { to: (i32, i32) },
     Hunt { target: u32 },
+    HuntHuman { target: u32 },
     Scavenge { corpse: u32 },
     Court { mate: u32 },
     JoinHerd { to: (i32, i32) },
@@ -88,6 +91,17 @@ pub fn decide(inp: &AnimalMindInput, p: &Percepts, my_pos: (i32, i32)) -> (Actio
         if let Some(_) = p.prey_idx {
             let close = (10.0 - p.prey_dist as f32).max(0.0) / 10.0;
             r.hunt = inp.hunger.powf(1.2) * inp.genes[1] * (0.6 + close) * (0.5 + inp.genes[2]);
+        }
+        // man-eating: only a starving, unusually bold predator crosses that line —
+        // and once it has, the same causes will drive it again
+        if let Some(_) = p.human_prey {
+            if inp.hunger > 1.05 && inp.genes[2] > 1.05 {
+                let close = (10.0 - p.human_prey_dist as f32).max(0.0) / 10.0;
+                let u = inp.hunger.powf(1.3) * (0.4 + close) * (inp.genes[2] - 0.6);
+                if u > r.hunt {
+                    r.hunt = u;
+                }
+            }
         }
         if p.carrion_near.is_some() {
             r.eat = r.eat.max(inp.hunger * 1.1);
@@ -150,7 +164,22 @@ pub fn decide(inp: &AnimalMindInput, p: &Percepts, my_pos: (i32, i32)) -> (Actio
                 Action::Roam
             }
         }
-        3 => Action::Hunt { target: p.prey_idx.unwrap() },
+        3 => {
+            // prefer the human only when desperation actually selected them
+            let human_better = inp.hunger > 1.05
+                && inp.genes[2] > 1.05
+                && p.human_prey.is_some()
+                && (p.prey_idx.is_none() || p.human_prey_dist < p.prey_dist);
+            if human_better {
+                Action::HuntHuman { target: p.human_prey.unwrap() }
+            } else if let Some(t) = p.prey_idx {
+                Action::Hunt { target: t }
+            } else if let Some(t) = p.human_prey {
+                Action::HuntHuman { target: t }
+            } else {
+                Action::Roam
+            }
+        }
         4 => Action::Court { mate: p.mate_idx.unwrap() },
         5 => Action::JoinHerd { to: p.herd_center.unwrap() },
         6 => Action::Rest,

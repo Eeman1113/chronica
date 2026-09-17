@@ -320,7 +320,6 @@ impl eframe::App for App {
             );
             let painter = ui.painter_at(rect);
             painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(8, 12, 24));
-            painter.image(tex.id(), rect, uv, egui::Color32::WHITE);
 
             let visible = |x: i32, y: i32| -> bool {
                 (x as f32) > self.cam.x - half.x - 2.0
@@ -328,82 +327,206 @@ impl eframe::App for App {
                     && (y as f32) > self.cam.y - half.y - 2.0
                     && (y as f32) < self.cam.y + half.y + 2.0
             };
-            let close_up = self.zoom >= 14.0;
+            let ascii = self.zoom >= 12.0; // close-up: the world in glyphs, prototype-style
+            let labels = self.zoom >= 22.0;
 
-            // buildings
+            if !ascii {
+                painter.image(tex.id(), rect, uv, egui::Color32::WHITE);
+            } else {
+                // ---------- ASCII world ----------
+                let x0 = (self.cam.x - half.x).floor() as i32 - 1;
+                let x1 = (self.cam.x + half.x).ceil() as i32 + 1;
+                let y0 = (self.cam.y - half.y).floor() as i32 - 1;
+                let y1 = (self.cam.y + half.y).ceil() as i32 + 1;
+                let font = egui::FontId::monospace(self.zoom * 0.95);
+                let g = &self.sim.grid;
+                for cy in y0..=y1 {
+                    for cx in x0..=x1 {
+                        let Some(i) = g.idx(cx, cy) else { continue };
+                        let center = to_screen(cx as f32 + 0.5, cy as f32 + 0.5);
+                        // choose glyph + colors from TRUE state
+                        let (ch, fg, bg): (&str, egui::Color32, egui::Color32) = if g.ocean[i] {
+                            ("≈", egui::Color32::from_rgb(60, 100, 170), egui::Color32::from_rgb(14, 26, 52))
+                        } else if g.surface[i] > 0.12 {
+                            ("≈", egui::Color32::from_rgb(110, 160, 230), egui::Color32::from_rgb(24, 44, 88))
+                        } else if g.is_river(i) {
+                            ("~", egui::Color32::from_rgb(120, 180, 240), egui::Color32::from_rgb(26, 46, 90))
+                        } else if g.burning[i] > 0 {
+                            ("^", egui::Color32::from_rgb(255, 170, 60), egui::Color32::from_rgb(120, 40, 10))
+                        } else if g.snow[i] > 0.02 {
+                            ("∙", egui::Color32::from_rgb(240, 244, 250), egui::Color32::from_rgb(120, 128, 145))
+                        } else if g.elev[i] > 0.85 {
+                            ("▲", egui::Color32::from_rgb(150, 145, 140), egui::Color32::from_rgb(52, 50, 48))
+                        } else if g.burn_scar[i] > 0.3 {
+                            ("%", egui::Color32::from_rgb(120, 100, 80), egui::Color32::from_rgb(40, 34, 28))
+                        } else {
+                            // dominant living plant in this cell decides the glyph
+                            let mut tree_b = 0.0f32;
+                            let mut tree_sp = 2u8;
+                            let mut crop = false;
+                            let mut herb_b = 0.0f32;
+                            let mut shrub_b = 0.0f32;
+                            if let Some(pids) = self.sim.plants.by_cell.get(i) {
+                                for &pi in pids {
+                                    let pl = &self.sim.plants.list[pi as usize];
+                                    if !pl.alive {
+                                        continue;
+                                    }
+                                    match pl.species {
+                                        chronica_engine::species::SP_WHEAT => crop = true,
+                                        chronica_engine::species::SP_OAK
+                                        | chronica_engine::species::SP_PINE => {
+                                            if pl.biomass > tree_b {
+                                                tree_b = pl.biomass;
+                                                tree_sp = pl.species;
+                                            }
+                                        }
+                                        chronica_engine::species::SP_SCRUB => shrub_b += pl.biomass,
+                                        _ => herb_b += pl.biomass,
+                                    }
+                                }
+                            }
+                            let soil_bg = egui::Color32::from_rgb(38, 32, 22);
+                            if crop {
+                                ("≡", egui::Color32::from_rgb(225, 195, 80), egui::Color32::from_rgb(60, 48, 20))
+                            } else if tree_b > 1.5 {
+                                if tree_sp == chronica_engine::species::SP_PINE {
+                                    ("↑", egui::Color32::from_rgb(70, 140, 90), egui::Color32::from_rgb(18, 36, 24))
+                                } else {
+                                    ("♠", egui::Color32::from_rgb(90, 170, 80), egui::Color32::from_rgb(20, 40, 22))
+                                }
+                            } else if tree_b > 0.3 {
+                                ("τ", egui::Color32::from_rgb(110, 160, 90), egui::Color32::from_rgb(26, 38, 24))
+                            } else if shrub_b > 0.3 {
+                                ("*", egui::Color32::from_rgb(150, 160, 90), egui::Color32::from_rgb(34, 36, 22))
+                            } else if herb_b > 0.5 {
+                                ("\"", egui::Color32::from_rgb(120, 180, 90), egui::Color32::from_rgb(28, 42, 24))
+                            } else if herb_b > 0.12 {
+                                (",", egui::Color32::from_rgb(110, 150, 85), egui::Color32::from_rgb(30, 38, 24))
+                            } else if herb_b > 0.02 {
+                                ("·", egui::Color32::from_rgb(120, 120, 80), soil_bg)
+                            } else {
+                                (".", egui::Color32::from_rgb(105, 90, 65), soil_bg)
+                            }
+                        };
+                        let cell_rect = egui::Rect::from_center_size(
+                            center,
+                            egui::vec2(self.zoom + 1.0, self.zoom + 1.0),
+                        );
+                        painter.rect_filled(cell_rect, 0.0, bg);
+                        painter.text(center, egui::Align2::CENTER_CENTER, ch, font.clone(), fg);
+                    }
+                }
+            }
+
+            // ---------- buildings ----------
             for b in self.sim.objects.buildings.iter().filter(|b| b.exists) {
                 let (x, y) = self.sim.grid.xy(b.cell as usize);
                 if !visible(x, y) {
                     continue;
                 }
                 let p = to_screen(x as f32 + 0.5, y as f32 + 0.5);
-                painter.rect_filled(
-                    egui::Rect::from_center_size(
-                        p,
-                        egui::vec2(self.zoom * 0.85, self.zoom * 0.85),
-                    ),
-                    2.0,
-                    egui::Color32::from_rgb(160, 120, 70),
-                );
-                if close_up && b.food_store > 0.5 {
+                if ascii {
                     painter.text(
                         p,
                         egui::Align2::CENTER_CENTER,
-                        format!("{:.0}", b.food_store),
-                        egui::FontId::proportional(self.zoom * 0.45),
-                        egui::Color32::from_rgb(255, 235, 180),
+                        "⌂",
+                        egui::FontId::monospace(self.zoom * 0.95),
+                        egui::Color32::from_rgb(210, 160, 90),
+                    );
+                } else {
+                    painter.rect_filled(
+                        egui::Rect::from_center_size(p, egui::vec2(self.zoom * 0.85, self.zoom * 0.85)),
+                        2.0,
+                        egui::Color32::from_rgb(160, 120, 70),
                     );
                 }
             }
-            // animals: colored dots; at close-up, species initial + what they're doing
-            for (ai, a) in self.sim.animals.list.iter().enumerate().filter(|(_, a)| a.alive) {
+            // ---------- animals: DF letters ----------
+            for a in self.sim.animals.list.iter().filter(|a| a.alive) {
                 if !visible(a.x, a.y) {
                     continue;
                 }
                 let sp = &chronica_engine::species::ANIMALS[a.species as usize];
                 let p = to_screen(a.x as f32 + 0.5, a.y as f32 + 0.5);
-                let col = if sp.prey.is_empty() {
-                    egui::Color32::from_rgb(205, 175, 132)
+                if ascii {
+                    let (ch, col) = match a.species {
+                        chronica_engine::species::A_HARE => ("h", egui::Color32::from_rgb(210, 190, 150)),
+                        chronica_engine::species::A_DEER => ("d", egui::Color32::from_rgb(200, 160, 110)),
+                        chronica_engine::species::A_BOAR => ("b", egui::Color32::from_rgb(150, 110, 80)),
+                        chronica_engine::species::A_WOLF => ("w", egui::Color32::from_rgb(235, 90, 90)),
+                        chronica_engine::species::A_BEAR => ("B", egui::Color32::from_rgb(230, 110, 60)),
+                        chronica_engine::species::A_SHEEP => ("s", egui::Color32::from_rgb(230, 225, 210)),
+                        chronica_engine::species::A_HORSE => ("H", egui::Color32::from_rgb(190, 150, 100)),
+                        _ => ("A", egui::Color32::from_rgb(170, 130, 90)),
+                    };
+                    painter.text(
+                        p,
+                        egui::Align2::CENTER_CENTER,
+                        ch,
+                        egui::FontId::monospace(self.zoom * 0.95),
+                        col,
+                    );
                 } else {
-                    egui::Color32::from_rgb(225, 80, 80)
-                };
-                painter.circle_filled(p, (self.zoom * 0.28).max(1.5), col);
-                if close_up {
+                    let col = if sp.prey.is_empty() {
+                        egui::Color32::from_rgb(205, 175, 132)
+                    } else {
+                        egui::Color32::from_rgb(225, 80, 80)
+                    };
+                    painter.circle_filled(p, (self.zoom * 0.28).max(1.5), col);
+                }
+                if labels {
                     let doing = match a.rationale.chosen {
                         0 => "fleeing!",
-                        1 => "→ water",
+                        1 => "→water",
                         2 => "grazing",
                         3 => "hunting!",
                         4 => "courting",
-                        5 => "w/ herd",
+                        5 => "w/herd",
                         6 => "resting",
                         _ => "roaming",
                     };
                     painter.text(
-                        p + egui::vec2(0.0, -self.zoom * 0.45),
+                        p + egui::vec2(0.0, -self.zoom * 0.55),
                         egui::Align2::CENTER_BOTTOM,
                         format!("{} {}", sp.name, doing),
-                        egui::FontId::proportional((self.zoom * 0.38).min(13.0)),
-                        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 210),
+                        egui::FontId::proportional((self.zoom * 0.32).min(13.0)),
+                        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200),
                     );
                 }
-                let _ = ai;
             }
-            // people: yellow dots; at close-up, name + current action
+            // ---------- people: @ ----------
             for h in self.sim.humans.list.iter().filter(|h| h.alive) {
                 if !visible(h.x, h.y) {
                     continue;
                 }
                 let p = to_screen(h.x as f32 + 0.5, h.y as f32 + 0.5);
-                painter.circle_filled(
-                    p,
-                    (self.zoom * 0.36).max(2.0),
-                    egui::Color32::from_rgb(252, 240, 110),
-                );
-                if close_up {
+                if ascii {
+                    let cul_col = [
+                        egui::Color32::from_rgb(255, 240, 120),
+                        egui::Color32::from_rgb(120, 220, 255),
+                        egui::Color32::from_rgb(255, 150, 220),
+                        egui::Color32::from_rgb(160, 255, 160),
+                        egui::Color32::from_rgb(255, 180, 120),
+                    ][(h.culture as usize) % 5];
+                    painter.text(
+                        p,
+                        egui::Align2::CENTER_CENTER,
+                        "@",
+                        egui::FontId::monospace(self.zoom * 0.95),
+                        cul_col,
+                    );
+                } else {
+                    painter.circle_filled(
+                        p,
+                        (self.zoom * 0.36).max(2.0),
+                        egui::Color32::from_rgb(252, 240, 110),
+                    );
+                }
+                if labels {
                     let doing = match h.current {
                         chronica_engine::humans::HumanAction::Gather => "gathering",
-                        chronica_engine::humans::HumanAction::Drink { .. } => "→ water",
+                        chronica_engine::humans::HumanAction::Drink { .. } => "→water",
                         chronica_engine::humans::HumanAction::EatStored => "eating",
                         chronica_engine::humans::HumanAction::Hunt { .. } => "hunting!",
                         chronica_engine::humans::HumanAction::ChopWood => "chopping",
@@ -418,11 +541,42 @@ impl eframe::App for App {
                         chronica_engine::humans::HumanAction::Idle => "idling",
                     };
                     painter.text(
-                        p + egui::vec2(0.0, -self.zoom * 0.5),
+                        p + egui::vec2(0.0, -self.zoom * 0.55),
                         egui::Align2::CENTER_BOTTOM,
                         format!("{} — {}", h.name, doing),
-                        egui::FontId::proportional((self.zoom * 0.42).min(14.0)),
+                        egui::FontId::proportional((self.zoom * 0.36).min(14.0)),
                         egui::Color32::WHITE,
+                    );
+                }
+            }
+            // ---------- recent happenings, marked where they happened ----------
+            let now = self.sim.clock.day;
+            for ev in self.sim.history.events.iter().rev().take(600) {
+                if now.saturating_sub(ev.day) > 3 {
+                    break;
+                }
+                let Some(loc) = ev.loc else { continue };
+                let (x, y) = self.sim.grid.xy(loc as usize);
+                if !visible(x, y) {
+                    continue;
+                }
+                let p = to_screen(x as f32 + 0.5, y as f32 + 0.5);
+                use chronica_engine::history::EventKind as EK;
+                let mark = match &ev.kind {
+                    EK::Killed { .. } => Some(("✕", egui::Color32::from_rgb(255, 60, 60))),
+                    EK::RaidCarriedOut { .. } => Some(("‼", egui::Color32::from_rgb(255, 120, 40))),
+                    EK::Born { .. } => Some(("+", egui::Color32::from_rgb(255, 160, 220))),
+                    EK::HarvestedFood { .. } => Some(("$", egui::Color32::from_rgb(240, 210, 90))),
+                    EK::FelledTree { .. } => Some(("/", egui::Color32::from_rgb(200, 170, 120))),
+                    _ => None,
+                };
+                if let Some((ch, col)) = mark {
+                    painter.text(
+                        p + egui::vec2(self.zoom * 0.3, -self.zoom * 0.3),
+                        egui::Align2::CENTER_CENTER,
+                        ch,
+                        egui::FontId::monospace((self.zoom * 0.8).max(10.0)),
+                        col,
                     );
                 }
             }

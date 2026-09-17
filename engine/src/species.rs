@@ -70,7 +70,7 @@ pub struct AnimalSpecies {
 }
 
 pub const ANIMALS: &[AnimalSpecies] = &[
-    AnimalSpecies { name: "Hare", diet: Diet::Herbivore, mass: 3.0, speed: 4, perception: 5, lifespan_y: 6.0, maturity_y: 0.6, gestation_d: 32, litter: (2, 5), hunger_rate: 0.30, herd: 0.1, prey: &[], domesticable: false, t_min: -12.0, t_max: 30.0 },
+    AnimalSpecies { name: "Hare", diet: Diet::Herbivore, mass: 3.0, speed: 4, perception: 5, lifespan_y: 6.0, maturity_y: 0.6, gestation_d: 32, litter: (2, 4), hunger_rate: 0.30, herd: 0.1, prey: &[], domesticable: false, t_min: -12.0, t_max: 30.0 },
     AnimalSpecies { name: "Deer", diet: Diet::Herbivore, mass: 60.0, speed: 5, perception: 7, lifespan_y: 14.0, maturity_y: 1.5, gestation_d: 200, litter: (1, 2), hunger_rate: 0.16, herd: 0.7, prey: &[], domesticable: false, t_min: -15.0, t_max: 28.0 },
     AnimalSpecies { name: "Boar", diet: Diet::Omnivore, mass: 80.0, speed: 4, perception: 6, lifespan_y: 12.0, maturity_y: 1.2, gestation_d: 115, litter: (2, 6), hunger_rate: 0.18, herd: 0.4, prey: &[0], domesticable: true, t_min: -8.0, t_max: 30.0 },
     AnimalSpecies { name: "Wolf", diet: Diet::Carnivore, mass: 40.0, speed: 6, perception: 9, lifespan_y: 10.0, maturity_y: 1.8, gestation_d: 63, litter: (2, 5), hunger_rate: 0.14, herd: 0.6, prey: &[0, 1, 2, 5], domesticable: false, t_min: -25.0, t_max: 26.0 },

@@ -143,7 +143,7 @@ pub fn generate(sim: &mut Sim) {
         (crate::species::A_HARE, 0.010),
         (crate::species::A_DEER, 0.004),
         (crate::species::A_BOAR, 0.002),
-        (crate::species::A_WOLF, 0.0007),
+        (crate::species::A_WOLF, 0.0005),
         (crate::species::A_BEAR, 0.0003),
         (crate::species::A_SHEEP, 0.002),
         (crate::species::A_HORSE, 0.001),
@@ -195,6 +195,8 @@ pub fn tick(sim: &mut Sim) {
     let animals = &sim.animals;
     let grid = &sim.grid;
     let plants = &sim.plants;
+    let sim_humans_index = &sim.humans.index;
+    let sim_humans_list = &sim.humans.list;
     let plans: Vec<Option<AnimalPlan>> = par_map(animals.list.len(), |ai| {
         let a = &animals.list[ai];
         if !a.alive {
@@ -205,6 +207,7 @@ pub fn tick(sim: &mut Sim) {
         p.threat_dist = i32::MAX;
         p.prey_dist = i32::MAX;
         p.mate_dist = i32::MAX;
+        p.human_prey_dist = i32::MAX;
         let r = sp.perception;
         let mut herd_sum = (0i64, 0i64, 0i64);
         animals.index.for_each_near(a.x, a.y, r, |oi| {
@@ -244,6 +247,21 @@ pub fn tick(sim: &mut Sim) {
         if herd_sum.2 >= 2 {
             p.herd_center =
                 Some(((herd_sum.0 / herd_sum.2) as i32, (herd_sum.1 / herd_sum.2) as i32));
+        }
+        // a desperate predator sees people too
+        if sp.diet != Diet::Herbivore && sp.mass > 30.0 && a.hunger > 1.0 {
+            let humans = &sim_humans_index;
+            humans.for_each_near(a.x, a.y, r, |hi2| {
+                let hq = &sim_humans_list[hi2 as usize];
+                if !hq.alive {
+                    return;
+                }
+                let d = (hq.x - a.x).abs().max((hq.y - a.y).abs());
+                if d <= r && d < p.human_prey_dist {
+                    p.human_prey_dist = d;
+                    p.human_prey = Some(hi2);
+                }
+            });
         }
         // forage: edible biomass here + best nearby cell scanned in a small ring
         let edible_local = |cell: usize| -> f32 {
@@ -416,6 +434,9 @@ pub fn tick(sim: &mut Sim) {
             }
             Action::Hunt { target } => {
                 hunt(sim, ai, target as usize, &mut deaths);
+            }
+            Action::HuntHuman { target } => {
+                hunt_human(sim, ai, target as usize);
             }
             Action::Scavenge { corpse } => {
                 scavenge(sim, ai, corpse as usize);
@@ -781,7 +802,7 @@ fn hunt(sim: &mut Sim, ai: usize, ti: usize, deaths: &mut Vec<(usize, DeathCause
         let att = asp.mass * a.condition * (0.6 + a.genes[2] * 0.5);
         let def = tsp.mass * t.condition * (0.5 + t.genes[0] * 0.4)
             + tsp.speed as f32 * 6.0 * (1.0 - t.fatigue.min(1.0) * 0.5);
-        (((att / (att + def)) * 0.5).clamp(0.03, 0.75), Animals::id_of(ai))
+        (((att / (att + def)) * 0.42).clamp(0.03, 0.7), Animals::id_of(ai))
     };
     let roll = sim.animals.list[ai].rng.chance(p_kill);
     if roll {
@@ -902,6 +923,113 @@ fn court(sim: &mut Sim, ai: usize, mi: usize) {
             None,
             vec![],
         );
+    }
+}
+
+/// A predator stalks a person. The approach is real; the struggle weighs the beast's body
+/// against human courage, skill, and the crowd — and people can kill their attacker. Witnesses
+/// carry the memory: the raw material of man-eater legends and culls.
+fn hunt_human(sim: &mut Sim, ai: usize, hi: usize) {
+    if hi >= sim.humans.list.len() || !sim.humans.list[hi].alive {
+        return;
+    }
+    let (dist, to) = {
+        let a = &sim.animals.list[ai];
+        let h = &sim.humans.list[hi];
+        ((h.x - a.x).abs().max((h.y - a.y).abs()), (h.x, h.y))
+    };
+    let speed = ANIMALS[sim.animals.list[ai].species as usize].speed;
+    if dist > 1 {
+        move_animal_toward(sim, ai, to, speed);
+        let a = &mut sim.animals.list[ai];
+        a.fatigue = (a.fatigue + 0.2).min(1.5);
+    }
+    let dist_now = {
+        let a = &sim.animals.list[ai];
+        let h = &sim.humans.list[hi];
+        (h.x - a.x).abs().max((h.y - a.y).abs())
+    };
+    if dist_now > 1 {
+        return;
+    }
+    // the crowd matters: nearby adults raise the defense
+    let (hx, hy) = to;
+    let mut crowd = 0;
+    for o in sim.humans.list.iter() {
+        if o.alive && (o.x - hx).abs().max((o.y - hy).abs()) <= 2 {
+            crowd += 1;
+        }
+    }
+    let (p_kill, beast_id) = {
+        let a = &sim.animals.list[ai];
+        let h = &sim.humans.list[hi];
+        let asp = &ANIMALS[a.species as usize];
+        let att = asp.mass * a.condition * (0.5 + a.genes[2] * 0.5);
+        let def = 30.0 * (0.5 + h.traits[1] * 0.6 + h.skills[crate::humans::SK_FIGHT] * 0.8)
+            + crowd as f32 * 9.0;
+        (((att / (att + def)) * 0.45).clamp(0.03, 0.6), Animals::id_of(ai))
+    };
+    let roll = sim.animals.list[ai].rng.chance(p_kill);
+    let day = sim.clock.day;
+    let cell = sim.grid.idx(hx, hy).map(|i| i as u32);
+    if roll {
+        let hunger_now = sim.animals.list[ai].hunger;
+        let kill_ev = sim.history.push(
+            day,
+            EntityRef::Person(crate::humans::Humans::id_of(hi)),
+            EventKind::Killed { by: EntityRef::Animal(beast_id) },
+            cell,
+            vec![Cause::State(StateRef { what: StateKind::Hunger, value: hunger_now })],
+        );
+        crate::humans::kill_human(sim, hi, DeathCause::Predation, vec![Cause::Event(kill_ev)]);
+        {
+            let a = &mut sim.animals.list[ai];
+            let asp = &ANIMALS[a.species as usize];
+            a.hunger = (a.hunger - 60.0 / (asp.mass * 0.18)).max(0.0);
+            a.condition = (a.condition + 0.05).min(1.0);
+        }
+        // witnesses will not forget the beast
+        for oi in 0..sim.humans.list.len() {
+            let near = {
+                let o = &sim.humans.list[oi];
+                o.alive && (o.x - hx).abs().max((o.y - hy).abs()) <= 6
+            };
+            if near {
+                let o = &mut sim.humans.list[oi];
+                o.fear = (o.fear + 1.2).min(2.0);
+                crate::humans::remember(
+                    o,
+                    day,
+                    crate::humans::MemoryKind::FledBeast { beast: beast_id },
+                    1.6,
+                );
+            }
+        }
+    } else {
+        // driven off — and a brave defender may wound or kill the beast
+        {
+            let a = &mut sim.animals.list[ai];
+            a.fear = (a.fear + 0.8).min(2.0);
+            a.fatigue = (a.fatigue + 0.4).min(1.5);
+        }
+        let fight = {
+            let h = &mut sim.humans.list[hi];
+            h.fear = (h.fear + 0.8).min(2.0);
+            h.skills[crate::humans::SK_FIGHT] =
+                (h.skills[crate::humans::SK_FIGHT] + 0.01).min(1.0);
+            let pw = 0.15 + h.traits[1] * 0.3 + h.skills[crate::humans::SK_FIGHT] * 0.3;
+            h.rng.chance(pw)
+        };
+        if fight {
+            let kill_ev = sim.history.push(
+                day,
+                EntityRef::Animal(beast_id),
+                EventKind::Killed { by: EntityRef::Person(crate::humans::Humans::id_of(hi)) },
+                cell,
+                vec![],
+            );
+            kill_animal(sim, ai, DeathCause::Battle, vec![Cause::Event(kill_ev)], true);
+        }
     }
 }
 
