@@ -45,7 +45,8 @@ body{margin:0;background:#0c0a08;color:#cfc4a6;font-family:Georgia,serif;overflo
 #hint{position:fixed;bottom:10px;left:14px;color:#8d8065;font-size:12px;z-index:2}
 </style></head><body>
 <canvas id="map"></canvas>
-<div id="hud"><b>CHRONICA</b><span id="date"></span><span class="live"> LIVE</span><span id="pop"></span><span class="small" style="margin-left:auto">scroll = zoom · drag = pan · <a href="/classic" style="color:#8d8065">classic</a></span></div>
+<div id="hud"><b>CHRONICA</b><span id="date"></span><span class="live"> LIVE</span><span id="pop"></span><span style="margin-left:auto"><a href="/download/current" download style="color:#e8dcbc;text-decoration:none;border:1px solid #5a4a3a;padding:3px 9px;border-radius:4px">⬇ Download this world</a></span>
+<span class="small">scroll=zoom · drag=pan · <a href="/classic" style="color:#8d8065">classic</a></span></div>
 <div id="side"></div>
 <div id="hint">the world persists whether or not this page is open</div>
 <script>
@@ -86,7 +87,7 @@ function side(){const sd=document.getElementById('side');let h='';
  const fs=S.faiths.filter(f=>f.c>0),fg=S.faiths.length-fs.length;
  h+='<h2>Faiths</h2><ul>'+fs.map(f=>'<li>'+f.n+': '+f.c+' faithful</li>').join('')+(fg?'<li class="small">…and '+fg+' whose last believer is gone</li>':'')+'</ul>';
  h+='<h2>The chronicle</h2><ul id="chron">'+S.chron.map(c=>'<li>'+c+'</li>').join('')+'</ul>';
- if(S.past.length){h+='<h2>Worlds that were</h2><ul>'+S.past.map(p=>'<li>World '+p.no+' — ended year '+p.year+' — '+p.events+' events — <a href="/archive/'+p.base+'.png">portrait</a></li>').join('')+'</ul>'}
+ if(S.past.length){h+='<h2>Worlds that were <span class="small">('+S.past.length+')</span></h2><ul>'+S.past.map(p=>'<li>World '+p.no+' · ended yr '+p.year+' · '+p.events+' events<br><a href="/archive/'+p.base+'.png">portrait</a> · <a href="/archive/'+p.base+'.html">final page</a> · <a href="/archive/'+p.base+'.crn" download>⬇ save+history</a></li>').join('')+'</ul>'}
  sd.innerHTML=h}
 function draw(){requestAnimationFrame(draw);if(!S||!cells)return;
  ctx.fillStyle='#0c0a08';ctx.fillRect(0,0,cv.width,cv.height);
@@ -171,9 +172,14 @@ fn main() {
         let mut v = view.write().unwrap();
         *v = render_view(&sim);
     }
+    // the current world's full binary (save + entire event history), refreshed each autosave
+    let save_bytes: Arc<RwLock<Vec<u8>>> = Arc::new(RwLock::new(sim.to_bytes()));
+    let cur_seed: Arc<RwLock<u64>> = Arc::new(RwLock::new(sim.cfg.seed));
 
     // ---- HTTP server thread ----
     let server_view = Arc::clone(&view);
+    let server_save = Arc::clone(&save_bytes);
+    let server_seed = Arc::clone(&cur_seed);
     std::thread::spawn(move || {
         let server = tiny_http::Server::http(("0.0.0.0", port)).expect("bind http");
         eprintln!("serving on port {port}");
@@ -194,12 +200,42 @@ fn main() {
                     } else {
                         b"application/octet-stream"
                     };
-                    tiny_http::Response::from_data(bytes).with_header(
+                    let mut r = tiny_http::Response::from_data(bytes).with_header(
                         tiny_http::Header::from_bytes(&b"Content-Type"[..], ct).unwrap(),
-                    )
+                    );
+                    if name.ends_with(".crn") {
+                        r.add_header(
+                            tiny_http::Header::from_bytes(
+                                &b"Content-Disposition"[..],
+                                format!("attachment; filename=\"{name}\"").as_bytes(),
+                            )
+                            .unwrap(),
+                        );
+                    }
+                    r
                 } else {
                     tiny_http::Response::from_data(b"gone".to_vec())
                 }
+            } else if url.starts_with("/download/current") {
+                // the living world, whole: state + full causal history, one file
+                let bytes = server_save.read().unwrap().clone();
+                let seed = *server_seed.read().unwrap();
+                let fname = format!("chronica_world_seed_{seed:016x}.crn");
+                tiny_http::Response::from_data(bytes)
+                    .with_header(
+                        tiny_http::Header::from_bytes(
+                            &b"Content-Type"[..],
+                            &b"application/octet-stream"[..],
+                        )
+                        .unwrap(),
+                    )
+                    .with_header(
+                        tiny_http::Header::from_bytes(
+                            &b"Content-Disposition"[..],
+                            format!("attachment; filename=\"{fname}\"").as_bytes(),
+                        )
+                        .unwrap(),
+                    )
             } else if url.starts_with("/state.json") {
                 tiny_http::Response::from_data(v.state.clone().into_bytes()).with_header(
                     tiny_http::Header::from_bytes(
@@ -291,6 +327,8 @@ fn main() {
             sim = Sim::new(Config { seed: s, width, height });
             doomsday = u64::MAX;
             since_save = 0;
+            *save_bytes.write().unwrap() = sim.to_bytes();
+            *cur_seed.write().unwrap() = sim.cfg.seed;
             *view.write().unwrap() = render_view(&sim);
             continue;
         }
@@ -305,6 +343,7 @@ fn main() {
             let tmp = save_path.with_extension("crn.tmp");
             if persistence::save_to_file(&sim, &tmp).is_ok() {
                 let _ = std::fs::rename(&tmp, &save_path);
+                *save_bytes.write().unwrap() = sim.to_bytes();
                 eprintln!("[{}] autosaved", sim.clock.date_string());
             }
         }
