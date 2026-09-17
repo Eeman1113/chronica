@@ -197,3 +197,36 @@ observation signal enters the engine anywhere (Test H holds architecturally: the
 path by which looking can change state).
 
 **Next:** Stage 8 — benchmarks + PERFORMANCE.md numbers + final acceptance checklist.
+
+---
+
+## STAGE 8 — Stress & benchmarks
+
+**Done:** measured throughput at two world scales, thread-scaling equality, save size and
+load-continue timing; recorded in PERFORMANCE.md with hot-spot inventory for future §2.12-legal
+optimization. No optimization in this pass changed entity counts, state, or rules (none was
+applied — measurement only; the engine already meets interactive speeds at dev scale).
+
+**Verified by:** hashes identical across thread counts at benchmark scale; full suite 15/15
+after benchmarking.
+
+## FINAL ACCEPTANCE CHECKLIST (directive §8)
+
+- [x] Engine in Rust is the sole authority; renderer owns no state.
+- [x] Exactly one simulation mode; no flags, tiers, or brains-off switches.
+- [x] Every cell, water volume (per-cell surface+ground stores), plant, animal, human, building
+      has a stable persistent ID / index and real state. (Coins/lots partially — goods are real
+      stores/loads; itemized lots and currencies not yet built, honestly absent.)
+- [x] Dead/destroyed entities remain fully queryable; nothing pruned or capped.
+- [x] Relationships, knowledge, memories, beliefs are individual data.
+- [x] History is a causal event graph; player text generated from it (`inspection::describe`).
+- [x] High-level statistics are `derive(entities)` (population, cover, water stats, belief
+      clusters, settlements).
+- [x] No scheduled/scripted/probability-gated historical events (grep-verified; Test D).
+- [~] Settlements, beliefs, feuds, knowledge lineages emerge in test worlds. Wars-of-armies,
+      markets/currencies, and multi-century civilizations require the demographic sustainability
+      item (Stage 4 report) plus the economy build-out — the two honestly-open items.
+- [x] Same seed → same world across thread counts and save/load; replay verify works.
+- [x] Nothing exists because the player looked; nothing stops existing unlooked-at.
+- [x] Every inspection shows true state; "why?" reaches physical/social state (Test F).
+- [x] Performance work = measurement + layout/indexing plans; truth untouched.

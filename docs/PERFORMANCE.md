@@ -69,3 +69,23 @@ attributable. A benchmark harness lives in `tools/profiler` and runs headless vi
    emission, or any test-world outcome hash. Emergence tests + determinism tests are the guard.
 3. Prefer making the common case cheap (layout, batching) over making the rare case absent
    (which is usually a truth violation in disguise).
+
+---
+
+## Measured (Stage 8, 2026-09-17, Apple Silicon laptop, rustc 1.98, release+thin-LTO)
+
+| World | Contents (year 2–3) | Throughput |
+|---|---|---|
+| 192×128 | ~43k plants, ~25k trees, ~200 animals, dozens of people, full water/fire | **275 sim-days/s** |
+| 288×192 | proportionally larger | **134 sim-days/s** |
+
+- **Thread invariance:** seed 5, 720 days — state hash `5d27eb5409a55e95` identical with
+  `--threads 1` and `--threads 8` (the determinism suite also verifies this every CI run).
+- **Save:** complete world state (every plant/animal/person/event/RNG counter) = 10.0 MB
+  binary; load + 60 days continue = 0.57 s wall total.
+- **Event log:** ~20k events/sim-year at dev scale, unpruned by design; history growth is the
+  main long-run memory consumer — tiering to disk (SAVE_FORMAT.md) is the designed next step.
+- Known hot spots for future optimization (all §2.12-legal): per-tick plant `by_cell` rebuild
+  (incremental maintenance), event `by_entity` HashMap (columnar index), water flow sub-steps
+  (chunk dirty-skipping), full-list building scans in human perception (spatial index for
+  buildings).
