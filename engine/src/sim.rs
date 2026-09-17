@@ -31,6 +31,7 @@ pub struct Sim {
     pub fire: crate::fire::FireState,
     pub humans: crate::humans::Humans,
     pub objects: crate::objects::Objects,
+    pub society: crate::society::Society,
 }
 
 impl Sim {
@@ -49,6 +50,7 @@ impl Sim {
             fire,
             humans: Default::default(),
             objects: Default::default(),
+            society: Default::default(),
         };
         sim.generate();
         sim
@@ -93,7 +95,8 @@ impl Sim {
         crate::animals::tick(self);
         // Phases 5–8 for people: perception → cognition → action → physiology
         crate::humans::tick(self);
-        // Phases 9+ (society/economy) land with their stages.
+        // Phase 9: society — derived settlements, belief life, conflict
+        crate::society::tick(self);
     }
 
     pub fn run_days(&mut self, days: u64) {

@@ -140,3 +140,35 @@ real state and emit real events.
 
 **Next:** Stage 5 — settlements as derived building/population clusters, belief clusters,
 grievances; Stage 6 conflict + tools.
+
+---
+
+## STAGE 5+6 — Society, belief, conflict, causal tools
+
+**Done:** `society` — settlements are DERIVED: a monthly observation pass recognizes real
+building clusters (union-find over actual hut positions) with real residents; identity persists;
+abandonment observed, never deleted. Beliefs originate in individuals whose real grief/terror
+memories (cited as causes) crystallize under high piety — no population dice, no piety scan of
+the world, no founding by fiat; transmission happens only inside real conversations
+(`share_belief` hooked into socialize), with AdoptedBelief events chained to the origination;
+"religions" are derived clusters (`belief_clusters`). Conflict: raids arise from desperation
+(real hunger state, cited) or grievance (real kin-death memories, cited) plus courage plus an
+actually-visible out-group granary; defenders actually present may fight; killings breed the next
+generation's grievance memories — feud dynamics with full causal chains. `inspection` — the
+read-only API: `describe()` generates all player-facing text from structured events (chronicle
+voice), `why_text()` walks causal chains to physical/social StateRefs, `biography()` derives life
+stories purely from events. `world_inspector` speaks chronicle: latest events, why-chains,
+person biographies, derived settlements/beliefs.
+
+**Verified by:** Test C (settlements from real clusters, founding events anchored) — pass.
+Test D (6 seeds: raids causally chained where they occur; at least one seed raid-free — violence
+possible, never scheduled) — pass. Test F (predation death traces to hunger StateRef; why-text
+renders) — pass. Full suite: 15/15 green. Forbidden-pattern grep (`if year ==`, `every_N_years`,
+`start_war`, `generate_legend`, `possible_world_events`, drama lists): zero hits in engine/src.
+
+**Rules audit:** Formal markets/prices/currencies are NOT implemented (no fake): goods exist as
+real stores and carried loads; trade/prices remain for the economy build-out documented in
+CLAUDE.md open items. Wars-of-armies likewise: conflict currently expresses as raids/feuds at
+band scale — armies await larger societies. Nothing pretends otherwise.
+
+**Next:** Stage 7 renderer (egui over the inspection API), then Stage 8 benchmarks.

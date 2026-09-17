@@ -1468,6 +1468,9 @@ fn socialize(sim: &mut Sim, hi: usize, oi: usize) {
         let h = &mut sim.humans.list[hi];
         h.skills[SK_SPEAK] = (h.skills[SK_SPEAK] + 0.001).min(1.0);
     }
+    // beliefs travel inside real conversations
+    crate::society::share_belief(sim, hi, oi);
+    crate::society::share_belief(sim, oi, hi);
     // teaching: a technique passes along a real bond from one head to another
     let bond = sim.humans.rel_strength(hi, Humans::id_of(oi));
     if bond > 0.4 {

@@ -13,6 +13,8 @@ pub mod brains;
 pub mod animals;
 pub mod objects;
 pub mod humans;
+pub mod society;
+pub mod inspection;
 pub mod history;
 pub mod sim;
 pub mod persistence;
