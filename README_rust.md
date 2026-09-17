@@ -128,6 +128,52 @@ cargo test --release --workspace                                    # the full s
 animals, full hydrology and fire; complete world saves are ~10 MB; details in
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
+## Ways to die in Chronica (all real, all logged)
+
+Every one of these happened in a real run, was diagnosed *from the engine's own causal event
+log*, and taught us something — Chronica's growing collection of Dwarf-Fortress-style emergent
+obituaries:
+
+- **The world that drowned standing up.** Early hydrology filled every shallow basin until half
+  the continent was marsh; 246,495 plants died waterlogged in twenty years — while the death
+  events insisted it was "drought," because the cause-attribution couldn't yet tell *too much
+  water* from *too little*. The fix wasn't kinder plants; it was carving real drainage.
+- **The forests that froze every single winter.** Temperate oaks kept seeding the north each
+  summer (the germination check only asked about *today's* weather) and froze en masse each
+  January — 1,078,225 frost deaths before trees learned dormancy and seeds learned to fear
+  winter.
+- **The grass that drank the rivers dry.** A 375,000-strong sward transpired six times the
+  continent's rainfall. The rivers vanished, then the lakes, then every animal died of thirst
+  under a bright green meadow.
+- **Deer starving in a salad bar.** A movement bug made animals overshoot their target cell and
+  oscillate two tiles forever — herds ground their own footprint to dust and starved while lush
+  grass stood one step away, hunger rising *while the event log showed them eating daily*.
+- **The generation that never grew up.** Every founding animal was seeded age zero; the wolves
+  (seeded at six times a sane predator ratio) ate the entire world's children before a single
+  one reached breeding age. Result: forty years, zero births, extinction by dinner.
+- **Death by nostalgia for a river.** People remembered where water was — and never forgot. When
+  seasonal rivers moved, they walked to the dry bed, stood on it, re-targeted it the next
+  morning, and died of thirst on the memory of a spring.
+- **Nineteen marriages, zero children.** Conception only existed inside the *courtship* action —
+  which married couples, by definition, never take again. A whole society of devoted, childless
+  marriages until spouses learned that being together counts.
+- **Hut mania.** With shelter scored above supper, fifty settlers built fifty-three huts and
+  starved by day 38 — everyone died with a roof, a full woodpile, and an empty stomach.
+- **The sharing economy that ate the winter.** Making granaries a band commons (real forager
+  ethics!) drained every store to zero before the snow came. Generosity, it turns out, needs a
+  surplus first.
+- **The spring hungry gap.** Deaths now cluster in early spring — stores gone, first growth not
+  yet in — the same season that killed real pre-modern societies. The engine rediscovered
+  documented history without being told.
+- **Sana.** Felled two oaks, raised a dwelling, laid up food, befriended Mirvertal, founded a
+  religion from her own grief — and died of hunger in Year 2. Her faith died with zero faithful;
+  a rival's, *The Way of Belverbel*, got six. Her whole biography above is queried, not written.
+
+None of these were scripted, none were patched by cheating — every fix was physical (drainage,
+dormancy, transpiration budgets, predator ratios, memory invalidation, provisioning). That's the
+point of the project: **the world is allowed to kill you, but it must always be able to tell you
+exactly why.**
+
 ## Honest state of the world
 
 The engine is complete through all eight stages, but two things are open (tracked in the

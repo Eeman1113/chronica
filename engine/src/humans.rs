@@ -148,6 +148,7 @@ pub struct Human {
     pub rationale: HumanRationale,
     pub current: HumanAction,
     pub camp: (i32, i32), // band/home anchor: where this person considers "ours"
+    pub area_yield: f32,  // rolling memory of what this ground has been giving
     pub water_memory: Option<(i32, i32)>,
     pub days_starving: u16,
     pub days_thirsty: u16,
@@ -245,6 +246,7 @@ impl Humans {
             rationale: HumanRationale::default(),
             current: HumanAction::Idle,
             camp: (x, y),
+            area_yield: 1.0,
             water_memory: None,
             days_starving: 0,
             days_thirsty: 0,
@@ -559,9 +561,16 @@ fn decide(sim: &Sim, hi: usize, p: &HumanPercepts) -> (HumanAction, HumanRationa
     if adult && h.home.is_none() && food_avail > 1.0 && h.hunger < 0.8 && h.nutrition > 0.45 {
         r.build = 0.7 + h.traits[0] * 0.4;
     }
-    // farming: knowers of the technique tend plots when hungry season looms
-    if adult && h.techs.contains(&TECH_FARMING) {
-        r.farm = 0.8 + h.hunger * 0.5 + if food_avail < 2.0 { 0.4 } else { 0.0 };
+    // farming: knowers of the technique work plots by their homes — sowing in the growing
+    // seasons, harvesting when the wheat actually stands ripe. The consequence chain is real:
+    // no sowing → no stand → no harvest → hungry winter.
+    if adult && h.techs.contains(&TECH_FARMING) && !h.home.is_none() {
+        let season = day % 360 / 90; // 0 spring 1 summer 2 autumn 3 winter
+        r.farm = match season {
+            0 | 1 => 1.0 + h.hunger * 0.3,
+            2 => 1.3, // harvest presses
+            _ => 0.0, // fields sleep in winter
+        };
     }
     // social pull: bonds, courtship, teaching — stronger for warm personalities
     if !p.people_near.is_empty() {
@@ -773,6 +782,19 @@ pub fn tick(sim: &mut Sim) {
                 // hungry bands move camp with their feet
                 h.camp = (h.x, h.y);
             }
+            // foresight, not crisis: when the ground has gone thin for a homeless forager,
+            // strike camp BEFORE starving — the seasonal round of real foragers
+            if h.home.is_none() && h.area_yield < 0.25 && h.days_starving == 0 {
+                let hd = crate::core::rng::splitmix64(
+                    (day / 30) ^ (h.born as u64).wrapping_mul(131),
+                );
+                let dirs: [(i32, i32); 8] =
+                    [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)];
+                let d = dirs[(hd % 8) as usize];
+                let (ax, ay) = h.water_memory.unwrap_or((h.x, h.y));
+                h.camp = (ax + d.0 * 10, ay + d.1 * 10);
+                h.area_yield = 0.8; // hope, to be tested against the new ground
+            }
         }
         apply_action(sim, hi, act, &mut deaths);
     }
@@ -897,6 +919,65 @@ pub fn tick(sim: &mut Sim) {
             vec![],
         );
         let _ = mname;
+    }
+
+    // family life: parents provide — a child's camp is its mother's, and a parent who is
+    // actually beside a hungry child shares from the hand. Orphans face the world alone:
+    // a real consequence of every parental death.
+    for hi in 0..n {
+        let (mother, is_child) = {
+            let h = &sim.humans.list[hi];
+            if !h.alive {
+                continue;
+            }
+            let age_y = (day as i64 - h.born) as f32 / 360.0;
+            (h.mother, age_y < 14.0)
+        };
+        if !is_child {
+            continue;
+        }
+        let Some(m) = mother.some() else { continue };
+        let mi = m.index();
+        if mi >= sim.humans.list.len() || !sim.humans.list[mi].alive {
+            continue;
+        }
+        let (mcamp, mpos) = {
+            let mo = &sim.humans.list[mi];
+            (mo.camp, (mo.x, mo.y))
+        };
+        {
+            let c = &mut sim.humans.list[hi];
+            c.camp = mcamp;
+        }
+        let (near, child_hungry) = {
+            let c = &sim.humans.list[hi];
+            (
+                (c.x - mpos.0).abs().max((c.y - mpos.1).abs()) <= 3,
+                c.hunger > 0.7,
+            )
+        };
+        if near && child_hungry {
+            let give = {
+                let mo = &mut sim.humans.list[mi];
+                let g = (mo.carried_food - 0.3).max(0.0).min(0.8);
+                mo.carried_food -= g;
+                g
+            };
+            if give > 0.0 {
+                let c = &mut sim.humans.list[hi];
+                c.hunger = (c.hunger - give).max(0.0);
+            } else {
+                // nothing in hand: the mother draws on the granary for her child
+                let home = sim.humans.list[mi].home;
+                if let Some(b) = home.some() {
+                    let bld = &mut sim.objects.buildings[b.index()];
+                    let g = bld.food_store.min(0.8);
+                    bld.food_store -= g;
+                    let c = &mut sim.humans.list[hi];
+                    c.hunger = (c.hunger - g).max(0.0);
+                }
+            }
+        }
     }
 
     // family life: spouses who are actually together may conceive
@@ -1166,6 +1247,7 @@ fn apply_action(
             }
             let h = &mut sim.humans.list[hi];
             h.carried_food += got;
+            h.area_yield = h.area_yield * 0.92 + got * 0.08; // the land remembers being picked
             h.skills[SK_FORAGE] = (h.skills[SK_FORAGE] + 0.002).min(1.0);
             h.fatigue = (h.fatigue + 0.15).min(1.5);
             // eat from hand immediately if hungry
@@ -1592,52 +1674,100 @@ fn court(sim: &mut Sim, hi: usize, oi: usize) {
 /// crop plants; tended plots feed households and are how agriculture spreads on the map.
 fn tend_farm(sim: &mut Sim, hi: usize) {
     let day = sim.clock.day;
-    let cell = {
+    // the farm is the ring of land around the farmer's own house
+    let Some(home) = sim.humans.list[hi].home.some() else { return };
+    let (hx, hy) = sim.grid.xy(sim.objects.buildings[home.index()].cell as usize);
+    let at_farm = {
         let h = &sim.humans.list[hi];
-        sim.grid.idx(h.x, h.y)
+        (h.x - hx).abs().max((h.y - hy).abs()) <= 2
     };
-    let Some(cell) = cell else { return };
-    // harvest ripe wheat here, else sow
-    let pids = sim.plants.by_cell.get(cell).cloned().unwrap_or_default();
+    if !at_farm {
+        move_toward_h(sim, hi, (hx, hy), 2);
+        return;
+    }
+    let season = day % 360 / 90;
+    // 1) harvest any ripe wheat standing on the plot ring — straight into hand, then granary
     let mut harvested = 0.0f32;
-    let mut kills = Vec::new();
-    let mut wheat_here = 0;
-    for &pi in &pids {
-        let pl = &sim.plants.list[pi as usize];
-        if !pl.alive || pl.species != crate::species::SP_WHEAT {
-            continue;
-        }
-        wheat_here += 1;
-        if pl.biomass > 0.35 {
-            harvested += pl.biomass * PLANTS[pl.species as usize].edible;
-            kills.push(pi as usize);
+    let mut kills: Vec<usize> = Vec::new();
+    for dy in -2i32..=2 {
+        for dx in -2i32..=2 {
+            let Some(cell) = sim.grid.idx(hx + dx, hy + dy) else { continue };
+            let Some(pids) = sim.plants.by_cell.get(cell) else { continue };
+            for &pi in pids {
+                let pl = &sim.plants.list[pi as usize];
+                if pl.alive && pl.species == crate::species::SP_WHEAT && pl.biomass > 0.30 {
+                    harvested += pl.biomass * PLANTS[pl.species as usize].edible;
+                    kills.push(pi as usize);
+                }
+            }
         }
     }
     for pi in kills {
         crate::vegetation::kill_plant(sim, pi, DeathCause::Felled, vec![]);
     }
     if harvested > 0.0 {
-        let h = &mut sim.humans.list[hi];
-        h.carried_food += harvested;
-        h.skills[SK_FARM] = (h.skills[SK_FARM] + 0.004).min(1.0);
+        {
+            let h = &mut sim.humans.list[hi];
+            h.carried_food += harvested;
+            h.skills[SK_FARM] = (h.skills[SK_FARM] + 0.004).min(1.0);
+        }
+        // the harvest goes to the granary — this is what winter is survived on
+        let overflow = {
+            let h = &mut sim.humans.list[hi];
+            let keep = 1.0f32;
+            let over = (h.carried_food - keep).max(0.0);
+            h.carried_food -= over;
+            over
+        };
+        sim.objects.buildings[home.index()].food_store += overflow;
+        let cell = sim.grid.idx(hx, hy).map(|i| i as u32);
         sim.history.push(
             day,
             EntityRef::Person(Humans::id_of(hi)),
             EventKind::HarvestedFood { amount: harvested },
-            Some(cell as u32),
+            cell,
             vec![],
         );
         return;
     }
-    if wheat_here < 6 {
-        // sow: seeds become real crop plants
-        let n_sow = 3;
-        for _ in 0..n_sow {
-            sim.plants.spawn(sim.cfg.seed, crate::species::SP_WHEAT, cell as u32, day as i64, 0.05);
+    // 2) sowing season: put seed into the emptiest plot cell (real plants, real land use)
+    if season == 0 || season == 1 {
+        let mut best: Option<(usize, usize)> = None; // (cell, wheat count)
+        for dy in -2i32..=2 {
+            for dx in -2i32..=2 {
+                if dx == 0 && dy == 0 {
+                    continue; // not under the house
+                }
+                let Some(cell) = sim.grid.idx(hx + dx, hy + dy) else { continue };
+                if sim.grid.ocean[cell] || sim.grid.surface[cell] > 0.05 {
+                    continue;
+                }
+                let wheat = sim
+                    .plants
+                    .by_cell
+                    .get(cell)
+                    .map(|v| {
+                        v.iter()
+                            .filter(|&&pi| {
+                                let pl = &sim.plants.list[pi as usize];
+                                pl.alive && pl.species == crate::species::SP_WHEAT
+                            })
+                            .count()
+                    })
+                    .unwrap_or(0);
+                if wheat < 5 && best.map(|(_, w)| wheat < w).unwrap_or(true) {
+                    best = Some((cell, wheat));
+                }
+            }
         }
-        let h = &mut sim.humans.list[hi];
-        h.skills[SK_FARM] = (h.skills[SK_FARM] + 0.002).min(1.0);
-        h.fatigue = (h.fatigue + 0.2).min(1.5);
+        if let Some((cell, _)) = best {
+            for _ in 0..4 {
+                sim.plants.spawn(sim.cfg.seed, crate::species::SP_WHEAT, cell as u32, day as i64, 0.06);
+            }
+            let h = &mut sim.humans.list[hi];
+            h.skills[SK_FARM] = (h.skills[SK_FARM] + 0.002).min(1.0);
+            h.fatigue = (h.fatigue + 0.2).min(1.5);
+        }
     }
 }
 
