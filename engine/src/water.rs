@@ -10,12 +10,15 @@ use crate::sim::Sim;
 use crate::terrain::ground_capacity;
 use crate::world::grid::{DX8, DY8};
 
-const FLOW_RATE: f32 = 0.65;     // fraction of head difference that moves per day
+const FLOW_STEPS: u32 = 3;       // flow sub-steps per day (transport capacity on gentle slopes)
+const FLOW_RATE: f32 = 0.9;      // fraction of stable half-head-difference that moves per step
 const INFILTRATION: f32 = 0.020; // surface → groundwater per day
-const EVAP_BASE: f32 = 0.0016;   // per degree-day evaporation from surface water
-const SOIL_EVAP: f32 = 0.0016;   // groundwater loss to evapotranspiration
+const EVAP_BASE: f32 = 0.0002;   // per degree-day evaporation from surface water (~1m/yr warm)
+const SOIL_EVAP: f32 = 0.00008;  // bare-soil groundwater loss (plants transpire separately)
 const SPRING_RATE: f32 = 0.010;  // groundwater overflow → surface (springs/baseflow)
-const EROSION_K: f32 = 0.00030;  // sediment eroded per unit flow
+const BANK_RECHARGE: f32 = 0.15; // standing water refills the local aquifer
+const GW_DIFFUSION: f32 = 0.06;  // lateral groundwater equalization rate
+const EROSION_K: f32 = 0.00010;  // sediment eroded per unit flow (per flow sub-step)
 const FLOW_EMA: f32 = 0.06;      // how fast the derived-flow observation tracks reality
 
 pub fn tick(sim: &mut Sim) {
@@ -41,16 +44,73 @@ pub fn tick(sim: &mut Sim) {
         sim.grid.surface[i] -= evap;
         // evapotranspiration draws down groundwater
         sim.grid.ground[i] = (sim.grid.ground[i] - SOIL_EVAP * t * 0.35).max(0.0);
-        // springs: over-capacity groundwater surfaces
-        if sim.grid.ground[i] > cap {
-            let over = (sim.grid.ground[i] - cap).min(SPRING_RATE + (sim.grid.ground[i] - cap) * 0.5);
+        // riverbank/lakebed recharge: standing water soaks into the local aquifer
+        if sim.grid.surface[i] > 0.02 {
+            let recharge = (sim.grid.surface[i] * 0.5).min((cap - sim.grid.ground[i]).max(0.0) * BANK_RECHARGE);
+            sim.grid.surface[i] -= recharge;
+            sim.grid.ground[i] += recharge;
+        }
+        // springs: near-full aquifers vent to the surface (baseflow keeps valley streams
+        // alive between rains); over-capacity water always surfaces
+        let fill = sim.grid.ground[i] / cap;
+        if fill > 0.85 {
+            let over = ((fill - 0.85) * cap * 0.08).min(sim.grid.ground[i]);
             sim.grid.ground[i] -= over;
+            sim.grid.surface[i] += over;
+        }
+        if sim.grid.ground[i] > cap {
+            let over = sim.grid.ground[i] - cap;
+            sim.grid.ground[i] = cap;
             sim.grid.surface[i] += over;
         }
     }
 
+    // 1b) Lateral groundwater diffusion: aquifers equalize toward neighbors (this is how a
+    //     river actually waters a valley). Plan from snapshot, apply in order.
+    let ground_snap: Vec<f32> = sim.grid.ground.clone();
+    let soil_depth = &sim.grid.soil_depth;
+    let ocean_ref = &sim.grid.ocean;
+    let gw = sim.grid.w;
+    let gh = sim.grid.h as i32;
+    let elev_ref = &sim.grid.elev;
+    let fills: Vec<f32> = par_map(n, |i| {
+        if ocean_ref[i] {
+            return 0.0;
+        }
+        let cap_i = 0.2 + soil_depth[i] * 0.8;
+        // groundwater head: water-table fill plus terrain elevation — aquifers drain
+        // downslope into valleys, which is what sustains rivers between rains (baseflow)
+        let head_i = ground_snap[i] / cap_i + elev_ref[i] * 0.6;
+        let x = (i as u32 % gw) as i32;
+        let y = (i as u32 / gw) as i32;
+        let mut delta = 0.0;
+        for k in 0..4 {
+            let (nx, ny) = (x + crate::world::grid::DX4[k], y + crate::world::grid::DY4[k]);
+            if nx < 0 || ny < 0 || nx >= gw as i32 || ny >= gh {
+                continue;
+            }
+            let j = (ny as u32 * gw + nx as u32) as usize;
+            if ocean_ref[j] {
+                // coastal aquifers seep to the sea
+                delta -= (head_i - elev_ref[j] * 0.6).max(0.0) * GW_DIFFUSION * 0.1;
+                continue;
+            }
+            let cap_j = 0.2 + soil_depth[j] * 0.8;
+            let head_j = ground_snap[j] / cap_j + elev_ref[j] * 0.6;
+            delta += (head_j - head_i) * GW_DIFFUSION * 0.25 * cap_i.min(cap_j);
+        }
+        delta
+    });
+    for i in 0..n {
+        if fills[i] != 0.0 {
+            sim.grid.ground[i] = (sim.grid.ground[i] + fills[i]).max(0.0);
+        }
+    }
+
     // 2) Flow: each wet land cell sends water toward its lowest neighbor by hydraulic head
-    //    (elevation + water depth). Parallel plan from snapshot, ordered apply.
+    //    (elevation + water depth). Parallel plan from snapshot, ordered apply. Several
+    //    sub-steps per day give gentle slopes real transport capacity.
+    for _flow_step in 0..FLOW_STEPS {
     let elev = &sim.grid.elev;
     let surf_snapshot: Vec<f32> = sim.grid.surface.clone();
     let ocean = &sim.grid.ocean;
@@ -88,7 +148,7 @@ pub fn tick(sim: &mut Sim) {
         let (j, amt) = plans[i];
         if j == u32::MAX || amt <= 0.0 {
             // decay the flow observation where nothing moves
-            sim.grid.flow[i] *= 1.0 - FLOW_EMA;
+            sim.grid.flow[i] *= 1.0 - FLOW_EMA / FLOW_STEPS as f32;
             continue;
         }
         sim.grid.surface[i] -= amt;
@@ -115,6 +175,7 @@ pub fn tick(sim: &mut Sim) {
             }
         }
     }
+    } // end flow sub-steps
 }
 
 /// Derived observation: fraction of land cells that are river or lake (for stats/tests).

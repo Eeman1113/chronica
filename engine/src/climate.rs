@@ -55,7 +55,7 @@ pub fn tick(sim: &mut Sim) {
             let front = n_weather.fbm3(x as f32 / 28.0, y as f32 / 28.0, t_day / 11.0, 3);
             let humidity = 1.0 - lat * 0.35;
             let rain_amt = if front > 0.56 {
-                (front - 0.56) * p.base_rain * humidity * 10.0
+                (front - 0.56) * p.base_rain * humidity * 2.2
             } else {
                 0.0
             };

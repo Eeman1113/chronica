@@ -26,6 +26,9 @@ pub struct Sim {
     pub clock: Clock,
     pub grid: Grid,
     pub history: History,
+    pub plants: crate::vegetation::Plants,
+    pub animals: crate::animals::Animals,
+    pub fire: crate::fire::FireState,
 }
 
 impl Sim {
@@ -33,7 +36,16 @@ impl Sim {
     /// Terrain/climate/water generation arrives in Stage 2 and lives in their modules.
     pub fn new(cfg: Config) -> Sim {
         let grid = Grid::new(cfg.width, cfg.height);
-        let mut sim = Sim { cfg, clock: Clock::default(), grid, history: History::default() };
+        let fire = crate::fire::FireState::new(cfg.seed);
+        let mut sim = Sim {
+            cfg,
+            clock: Clock::default(),
+            grid,
+            history: History::default(),
+            plants: Default::default(),
+            animals: Default::default(),
+            fire,
+        };
         sim.generate();
         sim
     }
@@ -41,6 +53,8 @@ impl Sim {
     /// World generation dispatcher — grows per stage.
     fn generate(&mut self) {
         crate::terrain::generate(self);
+        crate::vegetation::generate(self);
+        crate::animals::generate(self);
         self.history.push(
             0,
             crate::core::ids::EntityRef::Cell(0),
@@ -57,8 +71,13 @@ impl Sim {
         crate::climate::tick(self);
         // Phase 2: water
         crate::water::tick(self);
-        // Phases 3..11 land with their stages (fire, vegetation, perception, cognition,
-        // action, physiology, society/economy, history commit, maintenance).
+        // Phase 3: fire & hazards (burns real fuel)
+        crate::fire::tick(self);
+        // Phase 4: vegetation (individual plants)
+        crate::vegetation::tick(self);
+        // Phases 5–8: animal perception → cognition → action → physiology
+        crate::animals::tick(self);
+        // Phases 9+ (humans, society/economy) land with their stages.
     }
 
     pub fn run_days(&mut self, days: u64) {

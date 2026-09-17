@@ -83,20 +83,33 @@ impl Grid {
             self.veg_cover = vec![0.0; self.n()];
         }
     }
+    /// Moisture as plants experience it: a full aquifer is field capacity (0.75), not
+    /// waterlogging; only standing water pushes toward saturation (1.0).
+    #[inline]
+    pub fn plant_moisture(&self, i: usize) -> f32 {
+        let cap = 0.2 + self.soil_depth[i] * 0.8;
+        let fill = (self.ground[i] / cap).clamp(0.0, 1.0);
+        let mut m = fill * 0.75;
+        if self.surface[i] > 0.05 {
+            m += 0.25;
+        }
+        m
+    }
+
     /// A cell currently holding meaningful fresh water (derived observation).
     #[inline]
     pub fn is_fresh_water(&self, i: usize) -> bool {
-        !self.ocean[i] && self.surface[i] > 0.05
+        !self.ocean[i] && self.surface[i] > 0.02
     }
     /// Derived "river" observation: sustained flow through a wet cell.
     #[inline]
     pub fn is_river(&self, i: usize) -> bool {
-        !self.ocean[i] && self.surface[i] > 0.01 && self.flow[i] > 0.02
+        !self.ocean[i] && self.surface[i] > 0.005 && self.flow[i] > 0.008
     }
     /// Derived "lake" observation: standing water with little throughflow.
     #[inline]
     pub fn is_lake(&self, i: usize) -> bool {
-        !self.ocean[i] && self.surface[i] > 0.12 && self.flow[i] <= 0.02
+        !self.ocean[i] && self.surface[i] > 0.10 && self.flow[i] <= 0.008
     }
 }
 

@@ -24,6 +24,10 @@ impl SpatialIndex {
         }
     }
     #[inline]
+    pub fn is_empty_dims(&self) -> bool {
+        self.bw == 0 || self.bh == 0
+    }
+    #[inline]
     fn bucket_of(&self, x: i32, y: i32) -> Option<usize> {
         if x < 0 || y < 0 {
             return None;

@@ -59,3 +59,42 @@ aggregate the rules forbid.
 vegetation transpiration draws on groundwater in Stage 3.
 
 **Next:** Stage 3 — individual plants (Test A), individual animals, food web, fire on real fuel.
+
+---
+
+## STAGE 3 — Biology
+
+**Done:** `species` (parameter tables only — behavior is shared); `vegetation` — every plant an
+individual entity (own RNG stream, per-individual lifespan drawn at germination, growth from its
+cell's real water/light/nutrients, transpiration feeding back into the aquifer, light competition
+in-cell, seeding into real neighbor cells gated by germination + first-winter survivability,
+perennial dieback-dormancy, death always with cause + causal StateRef/Event); `fire` — lightning
+in real storm cells, ignition/spread on real fuel (litter + standing biomass), burned plants die
+with events caused by the fire, rain extinguishes, no spread cap; `animals` — every animal an
+individual (needs, condition, per-individual lifespan, genes inherited with mutation, generation
+tracking, water memory), perception strictly through the spatial index, shared utility brain with
+**recorded rationale** (`brains::decide` — same architecture humans will extend), pursuit
+predation (kills require actually closing distance; dice only resolve the struggle), courtship on
+co-location, gestation with recorded sire, corpses that rot/are scavenged/fertilize soil.
+Water/climate refined: head-driven groundwater drainage (baseflow rivers), bank recharge, spring
+venting, shallow-depression drainage at gen (deep basins remain honest lake basins), 3 flow
+sub-steps/day.
+
+**Verified by:** Test A (`emergence_a_forest`): ≥10k trees, stat == count(entities), felling 60%
+drops count exactly and cover proportionally, every plant death has a cause event — pass.
+Predator/prey (`emergence_predator_prey`): >100 real births, real kills, every animal death
+recorded, predation deaths chain to their kill events — pass. Test B + full determinism suite
+still green. 40-year world: plants ~220k stable, trees ~15k stable, cover ~0.67, rivers/lakes
+persistent, 7.6k animal births vs 8k deaths (cycling populations).
+
+**Rules audit:** Ecology was tuned exclusively through physical/biological parameters (rain scale,
+evapotranspiration, aquifer physics, trophic densities, forage behavior) — never by exempting
+entities, faking counts, or scripting outcomes. Every mass die-off during tuning was diagnosed
+via the event log's cause distribution — the causality system already earns its keep.
+The directive's Stage 3 bar is met; long-run (>50y) megafauna persistence continues to be
+observed and tuned as later stages add humans (hunting pressure changes the balance anyway).
+
+**Decisions:** none new (parameters, not architecture).
+
+**Next:** Stage 4 — humans on the same brain architecture, with memory, relationships, knowledge,
+items; Test E.

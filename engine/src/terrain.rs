@@ -153,6 +153,53 @@ pub fn generate(sim: &mut Sim) {
             sim.grid.ground[i] = ground_capacity(&sim.grid, i) * 0.35;
         }
     }
+
+    // Drainage: geologic time has already carved valleys — fill *shallow* noise depressions via
+    // priority flood so land generally drains to the sea, while depressions deeper than
+    // DEEP_BASIN are kept: they are real basins where lakes can form by actually filling with
+    // water and spilling (still never "placed" as lakes).
+    const DEEP_BASIN: f32 = 0.30;
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+    #[inline]
+    fn key(v: f32) -> u32 {
+        (v + 16.0).to_bits() // positive-shifted f32 bits are order-preserving
+    }
+    let mut heap: BinaryHeap<Reverse<(u32, u32)>> = BinaryHeap::new();
+    let mut visited = vec![false; n];
+    for i in 0..n {
+        let (x, y) = sim.grid.xy(i);
+        let edge = x == 0 || y == 0 || x == w as i32 - 1 || y == h as i32 - 1;
+        if ocean[i] || edge {
+            visited[i] = true;
+            heap.push(Reverse((key(sim.grid.elev[i]), i as u32)));
+        }
+    }
+    let mut eps_count: u64 = 0;
+    while let Some(Reverse((k, iu))) = heap.pop() {
+        let i = iu as usize;
+        let level = f32::from_bits(k) - 16.0;
+        let (x, y) = sim.grid.xy(i);
+        for kk in 0..8 {
+            let (nx, ny) = (
+                x + crate::world::grid::DX8[kk],
+                y + crate::world::grid::DY8[kk],
+            );
+            if let Some(j) = sim.grid.idx(nx, ny) {
+                if visited[j] || ocean[j] {
+                    continue;
+                }
+                visited[j] = true;
+                let spill = level.max(sim.grid.elev[j]);
+                let fill = spill - sim.grid.elev[j];
+                if fill > 0.0 && fill < DEEP_BASIN {
+                    eps_count += 1;
+                    sim.grid.elev[j] = spill + eps_count as f32 * 1e-5;
+                }
+                heap.push(Reverse((key(sim.grid.elev[j].max(spill)), j as u32)));
+            }
+        }
+    }
 }
 
 /// Groundwater capacity of a cell — a function of its real soil depth.

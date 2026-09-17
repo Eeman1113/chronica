@@ -58,4 +58,7 @@ pub fn load_from_file(path: &Path) -> Result<Sim, SaveError> {
 pub fn rebuild_after_load(sim: &mut Sim) {
     sim.grid.rebuild_after_load();
     sim.history.rebuild_after_load();
+    sim.plants.rebuild_cell_aggregates(sim.grid.n());
+    crate::vegetation::refresh_cover(sim);
+    sim.animals.rebuild_index(sim.grid.w, sim.grid.h);
 }
