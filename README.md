@@ -6,6 +6,11 @@ Chronica is an emergent civilization simulator that runs entirely in your browse
 
 **Play it now: [https://eeman1113.github.io/chronica/](https://eeman1113.github.io/chronica/)**
 
+> **⚙️ Looking for the native engine?** This browser prototype is being rebuilt as a
+> deterministic, fully emergent world engine in Rust — every plant, animal, and person
+> individually simulated, every event causally traceable. **For the Rust implementation, see
+> [README_rust.md](README_rust.md).**
+
 ![A town and its fields in autumn](screenshots/01-town.jpg)
 
 ---
