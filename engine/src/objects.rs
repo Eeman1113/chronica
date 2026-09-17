@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BuildingKind {
     Hut,      // shelter for a household
-    Granary,  // shared food store
+    Granary,  // the common store: a hamlet's shared winter
     Hall,     // gathering place (institutions later)
+    Palisade, // a wall segment, raised from remembered violence
 }
 
 #[derive(Clone, Serialize, Deserialize)]

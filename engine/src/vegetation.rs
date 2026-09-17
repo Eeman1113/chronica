@@ -427,13 +427,22 @@ pub fn refresh_cover(sim: &mut Sim) {
     if sim.grid.veg_cover.len() != n {
         sim.grid.veg_cover = vec![0.0; n];
     }
+    if sim.grid.crop_cover.len() != n {
+        sim.grid.crop_cover = vec![0.0; n];
+    }
     for c in sim.grid.veg_cover.iter_mut() {
+        *c = 0.0;
+    }
+    for c in sim.grid.crop_cover.iter_mut() {
         *c = 0.0;
     }
     for p in &sim.plants.list {
         if p.alive {
             let sp = &PLANTS[p.species as usize];
             sim.grid.veg_cover[p.cell as usize] += p.biomass / sp.max_biomass;
+            if p.species == crate::species::SP_WHEAT {
+                sim.grid.crop_cover[p.cell as usize] += p.biomass;
+            }
         }
     }
 }

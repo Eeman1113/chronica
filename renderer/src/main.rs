@@ -55,6 +55,20 @@ impl App {
                 egui::Color32::from_rgb(52, 90, 160)
             } else if g.burning[i] > 0 {
                 egui::Color32::from_rgb(230, 92, 30)
+            } else if g.crop_cover.get(i).copied().unwrap_or(0.0) > 0.15 {
+                // fields read from orbit: the land people remade
+                let season = self.sim.clock.season();
+                match season {
+                    chronica_engine::core::clock::Season::Winter => {
+                        egui::Color32::from_rgb(150, 132, 96)
+                    }
+                    chronica_engine::core::clock::Season::Autumn => {
+                        egui::Color32::from_rgb(212, 178, 70)
+                    }
+                    _ => egui::Color32::from_rgb(178, 168, 74),
+                }
+            } else if g.is_path(i) {
+                egui::Color32::from_rgb(150, 128, 96) // roads walked into being
             } else {
                 let elev = g.elev[i].clamp(0.0, 1.2);
                 let cover = g.veg_cover.get(i).copied().unwrap_or(0.0).min(2.5) / 2.5;
@@ -162,6 +176,37 @@ impl eframe::App for App {
                             "soil N {:.2}  litter {:.2}  burn scar {:.2}",
                             g.soil_n[i], g.litter[i], g.burn_scar[i]
                         ));
+                        if let Some(bi) = self.sim.objects.building_at(i as u32) {
+                            let b = &self.sim.objects.buildings[bi];
+                            ui.separator();
+                            let kind = match b.kind {
+                                chronica_engine::objects::BuildingKind::Hut => "Dwelling",
+                                chronica_engine::objects::BuildingKind::Granary => {
+                                    "Common storehouse"
+                                }
+                                chronica_engine::objects::BuildingKind::Palisade => {
+                                    "Palisade"
+                                }
+                                chronica_engine::objects::BuildingKind::Hall => "Hall",
+                            };
+                            let state = if b.progress < 1.0 {
+                                format!("under construction ({:.0}%)", b.progress * 100.0)
+                            } else {
+                                format!("condition {:.0}%", b.condition * 100.0)
+                            };
+                            ui.heading(format!("{kind} — {state}"));
+                            ui.label(format!(
+                                "built by {}",
+                                chronica_engine::inspection::name_of(
+                                    &self.sim,
+                                    chronica_engine::core::ids::EntityRef::Person(b.builder)
+                                )
+                            ));
+                            ui.label(format!(
+                                "stores: {:.1} fresh, {:.1} smoked  ·  woodpile {:.1}  ·  timber used {:.0}",
+                                b.food_store, b.preserved_store, b.firewood, b.wood_used
+                            ));
+                        }
                         let status = if g.ocean[i] {
                             "open sea"
                         } else if g.is_river(i) {
@@ -498,6 +543,10 @@ impl eframe::App for App {
                             (["▲", "△", "▲", "▲"][v], egui::Color32::from_rgb(240, 240, 245), egui::Color32::from_rgb(70, 66, 78))
                         } else if g.elev[i] > 0.82 {
                             (["▒", "▲", "▒", "▒"][v], egui::Color32::from_rgb(150, 138, 155), egui::Color32::from_rgb(52, 48, 58))
+                        } else if g.is_path(i)
+                            && g.crop_cover.get(i).copied().unwrap_or(0.0) < 0.05
+                        {
+                            ("∙", egui::Color32::from_rgb(170, 150, 120), egui::Color32::from_rgb(52, 44, 34))
                         } else if g.burn_scar[i] > 0.3 {
                             (["\"", "·", "τ", "·"][v], egui::Color32::from_rgb(105, 100, 95), egui::Color32::from_rgb(36, 34, 32))
                         } else {
@@ -590,13 +639,19 @@ impl eframe::App for App {
                 }
                 let p = to_screen(x as f32 + 0.5, y as f32 + 0.5);
                 if ascii {
+                    use chronica_engine::objects::BuildingKind as BK;
                     let (glyph, col) = if !b.exists {
                         // per the key: ruins are grey and crumble
                         ("□", egui::Color32::from_rgb(130, 130, 130))
                     } else if b.progress < 1.0 {
                         ("□", egui::Color32::from_rgb(200, 170, 110))
                     } else {
-                        ("⌂", egui::Color32::from_rgb(210, 160, 90))
+                        match b.kind {
+                            BK::Granary => ("▦", egui::Color32::from_rgb(230, 200, 120)),
+                            BK::Palisade => ("#", egui::Color32::from_rgb(190, 165, 120)),
+                            BK::Hall => ("†", egui::Color32::from_rgb(210, 190, 160)),
+                            BK::Hut => ("⌂", egui::Color32::from_rgb(210, 160, 90)),
+                        }
                     };
                     painter.text(
                         p,

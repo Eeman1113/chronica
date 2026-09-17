@@ -609,11 +609,27 @@ fn decide(sim: &Sim, hi: usize, p: &HumanPercepts) -> (HumanAction, HumanRationa
             bl.exists && bl.progress < 1.0
         })
         .unwrap_or(false);
+    // a village project you'd benefit from: any unfinished granary or palisade near your home
+    let community_site = sim.objects.buildings.iter().position(|b| {
+        b.exists
+            && b.progress < 1.0
+            && matches!(
+                b.kind,
+                crate::objects::BuildingKind::Granary | crate::objects::BuildingKind::Palisade
+            )
+            && {
+                let (bx, by) = sim.grid.xy(b.cell as usize);
+                (bx - h.x).abs().max((by - h.y).abs()) <= 10
+            }
+    });
     if adult && food_avail > 1.0 && h.hunger < 0.8 {
         let season = day % 360 / 90;
         let winter_presses = if season == 2 { 0.5 } else { 0.0 }; // autumn urgency
         if my_house_unfinished {
             r.build = 1.0 + winter_presses;
+        } else if community_site.is_some() {
+            // many hands: the village raises what no single roof could
+            r.build = 0.8 + h.traits[2] * 0.3 + winter_presses;
         } else if h.home.is_none() && h.nutrition > 0.45 {
             r.build = 0.7 + h.traits[0] * 0.4 + winter_presses;
         }
@@ -839,6 +855,17 @@ fn add_rel(sim: &mut Sim, a: usize, b: usize, kind: RelKind, ds: f32) {
     }
 }
 
+fn wear_ground(sim: &mut Sim, hi: usize) {
+    let (x, y) = {
+        let h = &sim.humans.list[hi];
+        (h.x, h.y)
+    };
+    if let Some(j) = sim.grid.idx(x, y) {
+        // a footstep crushes the grass a little; ten thousand make a road
+        sim.grid.wear[j] = (sim.grid.wear[j] + 0.015).min(1.0);
+    }
+}
+
 fn move_human(sim: &mut Sim, hi: usize, dir: (i32, i32), steps: i32) {
     for _ in 0..steps {
         let (nx, ny) = {
@@ -880,7 +907,13 @@ fn near_fresh(sim: &Sim, x: i32, y: i32) -> bool {
 }
 
 /// Step toward a destination, stopping ON it (never overshooting past it).
+/// Beaten paths carry you further: an extra step when the ground underfoot is a road.
 fn move_toward_h(sim: &mut Sim, hi: usize, to: (i32, i32), steps: i32) {
+    let on_path = {
+        let h = &sim.humans.list[hi];
+        sim.grid.idx(h.x, h.y).map(|j| sim.grid.is_path(j)).unwrap_or(false)
+    };
+    let steps = if on_path { steps + 1 } else { steps };
     for _ in 0..steps {
         let (dir, arrived) = {
             let h = &sim.humans.list[hi];
@@ -909,6 +942,7 @@ fn move_toward_h(sim: &mut Sim, hi: usize, to: (i32, i32), steps: i32) {
             }
             _ => break,
         }
+        wear_ground(sim, hi);
     }
 }
 
@@ -1149,6 +1183,128 @@ pub fn tick(sim: &mut Sim) {
             let h = &mut sim.humans.list[hi];
             h.carried_food += meat * 0.12;
             h.hunger = (h.hunger - 1.0).max(0.0);
+        }
+    }
+
+    // ---------- the village takes shape: shared stores from surplus, walls from fear ----------
+    if day % 30 == 21 {
+        for hi in 0..n {
+            let (alive, adult, pos, wood, warm) = {
+                let h = &sim.humans.list[hi];
+                let age_y = (day as i64 - h.born) as f32 / 360.0;
+                (h.alive, age_y >= 16.0, (h.x, h.y), h.carried_wood, h.traits[2] > 0.4)
+            };
+            if !alive || !adult {
+                continue;
+            }
+            // how many finished homes stand near here? (a hamlet in being)
+            let mut homes = 0;
+            let mut has_granary = false;
+            let mut palisades = 0;
+            for b in sim.objects.buildings.iter() {
+                if !b.exists {
+                    continue;
+                }
+                let (bx, by) = sim.grid.xy(b.cell as usize);
+                if (bx - pos.0).abs().max((by - pos.1).abs()) <= 8 {
+                    match b.kind {
+                        crate::objects::BuildingKind::Hut if b.progress >= 1.0 => homes += 1,
+                        crate::objects::BuildingKind::Granary => has_granary = true,
+                        crate::objects::BuildingKind::Palisade => palisades += 1,
+                        _ => {}
+                    }
+                }
+            }
+            if homes < 3 {
+                continue;
+            }
+            // a common store rises where a hamlet stands and hands are willing
+            if !has_granary && wood >= 4.0 && warm {
+                if let Some(cell) = sim.grid.idx(pos.0, pos.1) {
+                    if sim.objects.building_at(cell as u32).is_none()
+                        && sim.grid.surface[cell] < 0.1
+                    {
+                        sim.objects.buildings.push(Building {
+                            kind: crate::objects::BuildingKind::Granary,
+                            cell: cell as u32,
+                            built_day: day,
+                            builder: Humans::id_of(hi),
+                            wood_used: 4.0,
+                            progress: 0.1,
+                            condition: 1.0,
+                            food_store: 0.0,
+                            preserved_store: 0.0,
+                            firewood: 0.0,
+                            burned: false,
+                            exists: true,
+                        });
+                        let h = &mut sim.humans.list[hi];
+                        h.carried_wood -= 4.0;
+                        continue;
+                    }
+                }
+            }
+            // walls rise from remembered violence: raids, beasts, thefts carried in THIS head
+            let fear_of_others: f32 = sim.humans.list[hi]
+                .memories
+                .iter()
+                .filter(|m| {
+                    matches!(
+                        m.kind,
+                        MemoryKind::StolenFrom { .. }
+                            | MemoryKind::KinDied { .. }
+                            | MemoryKind::FledBeast { .. }
+                    )
+                })
+                .map(|m| m.weight)
+                .sum();
+            if fear_of_others > 2.0 && palisades < 12 && wood >= 3.0 {
+                // one segment at a time, on the hamlet's rim, nearest to this builder
+                let mut best: Option<(usize, i32)> = None;
+                for r in 4..=6i32 {
+                    for dy in -r..=r {
+                        for dx in -r..=r {
+                            if dx.abs() != r && dy.abs() != r {
+                                continue;
+                            }
+                            let Some(cell) = sim.grid.idx(pos.0 + dx, pos.1 + dy) else {
+                                continue;
+                            };
+                            if sim.grid.ocean[cell]
+                                || sim.grid.surface[cell] > 0.1
+                                || sim.objects.building_at(cell as u32).is_some()
+                            {
+                                continue;
+                            }
+                            let d = dx.abs().max(dy.abs());
+                            if best.map(|(_, bd)| d < bd).unwrap_or(true) {
+                                best = Some((cell, d));
+                            }
+                        }
+                    }
+                    if best.is_some() {
+                        break;
+                    }
+                }
+                if let Some((cell, _)) = best {
+                    sim.objects.buildings.push(Building {
+                        kind: crate::objects::BuildingKind::Palisade,
+                        cell: cell as u32,
+                        built_day: day,
+                        builder: Humans::id_of(hi),
+                        wood_used: 3.0,
+                        progress: 0.15,
+                        condition: 1.0,
+                        food_store: 0.0,
+                        preserved_store: 0.0,
+                        firewood: 0.0,
+                        burned: false,
+                        exists: true,
+                    });
+                    let h = &mut sim.humans.list[hi];
+                    h.carried_wood -= 3.0;
+                }
+            }
         }
     }
 
@@ -1679,6 +1835,12 @@ pub fn tick(sim: &mut Sim) {
         }
     }
 
+    // the grass reclaims unwalked paths
+    if day % 360 == 77 {
+        for w in sim.grid.wear.iter_mut() {
+            *w *= 0.55;
+        }
+    }
     // memory decay: yearly pass, weakest fade but nothing is deleted from history
     if day % 360 == 200 {
         for h in sim.humans.list.iter_mut() {
@@ -1994,6 +2156,60 @@ fn apply_action(
             }
         }
         HumanAction::Build { kind } => {
+            // the village project first: shared walls and shared stores outrank private comfort
+            let community = sim.objects.buildings.iter().position(|b| {
+                b.exists
+                    && b.progress < 1.0
+                    && matches!(
+                        b.kind,
+                        crate::objects::BuildingKind::Granary
+                            | crate::objects::BuildingKind::Palisade
+                    )
+                    && {
+                        let h = &sim.humans.list[hi];
+                        let (bx, by) = sim.grid.xy(b.cell as usize);
+                        (bx - h.x).abs().max((by - h.y).abs()) <= 10
+                    }
+            });
+            if let Some(bi) = community {
+                let (bx, by) = sim.grid.xy(sim.objects.buildings[bi].cell as usize);
+                let at_site = {
+                    let h = &sim.humans.list[hi];
+                    (h.x - bx).abs().max((h.y - by).abs()) <= 1
+                };
+                if !at_site {
+                    move_toward_h(sim, hi, (bx, by), 2);
+                    return;
+                }
+                // your logs and your labor go into the common work
+                let skill = sim.humans.list[hi].skills[SK_BUILD];
+                let wood_give = sim.humans.list[hi].carried_wood.min(2.0);
+                {
+                    let h = &mut sim.humans.list[hi];
+                    h.carried_wood -= wood_give;
+                    h.fatigue = (h.fatigue + 0.25).min(1.5);
+                    h.skills[SK_BUILD] = (h.skills[SK_BUILD] + 0.006).min(1.0);
+                }
+                let b = &mut sim.objects.buildings[bi];
+                b.wood_used += wood_give;
+                b.progress = (b.progress
+                    + 0.06
+                    + skill * 0.06
+                    + if wood_give > 0.5 { 0.06 } else { 0.0 })
+                .min(1.0);
+                if b.progress >= 1.0 {
+                    let cell = b.cell;
+                    let bid = Objects::building_id(bi);
+                    sim.history.push(
+                        day,
+                        EntityRef::Person(Humans::id_of(hi)),
+                        EventKind::BuiltBuilding { building: EntityRef::Building(bid) },
+                        Some(cell),
+                        vec![],
+                    );
+                }
+                return;
+            }
             // is my own house already rising? then today's work goes into it
             let my_site = {
                 let h = &sim.humans.list[hi];
@@ -2127,6 +2343,46 @@ fn apply_action(
             }
         }
         HumanAction::Deposit => {
+            // prefer the village storehouse when one stands nearer than your own roof
+            let granary = {
+                let h = &sim.humans.list[hi];
+                sim.objects
+                    .buildings
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, b)| {
+                        b.standing()
+                            && matches!(b.kind, crate::objects::BuildingKind::Granary)
+                    })
+                    .map(|(bi, b)| {
+                        let (bx, by) = sim.grid.xy(b.cell as usize);
+                        (bi, (bx - h.x).abs().max((by - h.y).abs()))
+                    })
+                    .filter(|(_, d)| *d <= 8)
+                    .min_by_key(|(_, d)| *d)
+                    .map(|(bi, _)| bi)
+            };
+            if let Some(bi) = granary {
+                let (bx, by) = sim.grid.xy(sim.objects.buildings[bi].cell as usize);
+                let at_g = {
+                    let h = &sim.humans.list[hi];
+                    (h.x - bx).abs().max((h.y - by).abs()) <= 1
+                };
+                if !at_g {
+                    move_toward_h(sim, hi, (bx, by), 2);
+                    return;
+                }
+                let amt = {
+                    let h = &mut sim.humans.list[hi];
+                    let a = (h.carried_food - 0.5).max(0.0);
+                    h.carried_food -= a;
+                    a
+                };
+                if amt > 0.0 {
+                    sim.objects.buildings[bi].food_store += amt;
+                }
+                return;
+            }
             let home = sim.humans.list[hi].home;
             if let Some(b) = home.some() {
                 let (hx, hy) = sim.grid.xy(sim.objects.buildings[b.index()].cell as usize);

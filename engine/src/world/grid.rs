@@ -32,9 +32,12 @@ pub struct Grid {
     pub burning: Vec<u8>,    // remaining burn ticks (0 = not burning)
     pub burn_scar: Vec<f32>, // 0..1 recent-burn fraction, heals over years
     pub contamination: Vec<f32>,
+    pub wear: Vec<f32>,      // footpath wear: desire lines that become roads
     // -- occupancy caches (rebuilt, not serialized) --
     #[serde(skip)]
     pub veg_cover: Vec<f32>, // derived: total plant cover per cell (observation cache)
+    #[serde(skip)]
+    pub crop_cover: Vec<f32>, // derived: crop biomass per cell (fields, visible from afar)
 }
 
 impl Grid {
@@ -59,7 +62,9 @@ impl Grid {
             burning: vec![0; n],
             burn_scar: vec![0.0; n],
             contamination: vec![0.0; n],
+            wear: vec![0.0; n],
             veg_cover: vec![0.0; n],
+            crop_cover: vec![0.0; n],
         }
     }
 
@@ -84,6 +89,14 @@ impl Grid {
         if self.veg_cover.len() != self.n() {
             self.veg_cover = vec![0.0; self.n()];
         }
+        if self.crop_cover.len() != self.n() {
+            self.crop_cover = vec![0.0; self.n()];
+        }
+    }
+    /// A well-worn path: feet have beaten the ground into a road.
+    #[inline]
+    pub fn is_path(&self, i: usize) -> bool {
+        self.wear[i] > 0.25
     }
     /// Moisture as plants experience it: a full aquifer is field capacity (0.75), not
     /// waterlogging; only standing water pushes toward saturation (1.0).
