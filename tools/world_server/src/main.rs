@@ -242,7 +242,7 @@ fn main() {
             if doomsday == u64::MAX {
                 doomsday = sim.clock.day;
                 eprintln!(
-                    "[{}] the last creature has died — the plants inherit the world for 100 years",
+                    "[{}] the last creature has died — the plants inherit the world for 10 years",
                     sim.clock.date_string()
                 );
             }
@@ -251,7 +251,7 @@ fn main() {
         }
 
         // a century of silence, then the archive and a new genesis
-        if doomsday != u64::MAX && sim.clock.day >= doomsday + 100 * 360 {
+        if doomsday != u64::MAX && sim.clock.day >= doomsday + 10 * 360 {
             let world_no = epoch + 1;
             let this_seed = sim.cfg.seed;
             let year = sim.clock.day / 360;

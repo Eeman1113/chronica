@@ -429,6 +429,45 @@ body::before{
   *{animation:none !important;transition-duration:.01ms !important}
   .live-btn.on .dot,.scrub .liveMark::after{animation:none !important}
 }
+
+/* ===== ARCHIVE MODAL ===== */
+.modal-backdrop{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;padding:24px;
+  background:rgba(8,6,4,0.62);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+  opacity:0;transition:opacity .3s var(--ease)}
+.modal-backdrop.open{display:flex;opacity:1}
+.modal{width:min(880px,94vw);max-height:86vh;display:flex;flex-direction:column;
+  border-radius:var(--r-lg);background:var(--panel-solid);border:1px solid var(--line-strong);
+  box-shadow:var(--shadow);-webkit-backdrop-filter:blur(30px) saturate(1.5);backdrop-filter:blur(30px) saturate(1.5);
+  transform:translateY(12px) scale(.99);transition:transform .34s var(--ease-out)}
+.modal-backdrop.open .modal{transform:none}
+.modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;
+  padding:20px 22px 14px;border-bottom:1px solid var(--line)}
+.modal-head h2{margin:0;font-size:17px;font-weight:640;color:var(--ink);letter-spacing:-0.01em}
+.modal-sub{font-size:12px;color:var(--ink-mute);margin-top:3px}
+.modal-close{appearance:none;border:1px solid var(--line);background:var(--panel-2);color:var(--ink-soft);
+  width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:14px;transition:all .18s var(--ease);flex:0 0 auto}
+.modal-close:hover{color:var(--ink);border-color:var(--line-strong);background:rgba(48,39,31,0.7)}
+.modal-body{overflow-y:auto;padding:18px 22px 24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px;
+  scrollbar-width:thin;scrollbar-color:rgba(216,203,168,0.2) transparent}
+.modal-body::-webkit-scrollbar{width:9px}
+.modal-body::-webkit-scrollbar-thumb{background:rgba(216,203,168,0.16);border-radius:9px;border:3px solid transparent;background-clip:padding-box}
+.awc{display:flex;flex-direction:column;border-radius:var(--r-md);overflow:hidden;
+  background:linear-gradient(160deg,rgba(40,33,26,0.5),rgba(26,21,17,0.35));border:1px solid var(--line-hair);
+  transition:all .2s var(--ease)}
+.awc:hover{border-color:var(--line-strong);transform:translateY(-2px);box-shadow:var(--shadow-sm)}
+.awc .por{aspect-ratio:3/2;background:#0e0b09;position:relative;overflow:hidden}
+.awc .por img{width:100%;height:100%;object-fit:cover;display:block;filter:sepia(.15) saturate(1.05)}
+.awc .por .ph{position:absolute;inset:0;display:grid;place-items:center;color:var(--ink-faint);font-size:26px}
+.awc .abody{padding:11px 13px 13px}
+.awc .an{font-size:13.5px;font-weight:620;color:var(--ink)}
+.awc .ay{font-size:11.5px;color:var(--ink-mute);margin-top:2px;font-variant-numeric:tabular-nums}
+.awc .ae{font-size:11px;color:var(--ink-faint);margin-top:1px;font-variant-numeric:tabular-nums}
+.awc .adl{margin-top:10px;display:flex;align-items:center;justify-content:center;gap:7px;
+  padding:8px;border-radius:8px;text-decoration:none;font-size:12px;font-weight:550;
+  color:var(--gold);border:1px solid rgba(217,180,100,0.3);background:rgba(217,180,100,0.07);transition:all .18s var(--ease)}
+.awc .adl:hover{background:rgba(217,180,100,0.14);border-color:rgba(217,180,100,0.5)}
+.awc .adl svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.7}
+.modal-empty{grid-column:1/-1;text-align:center;color:var(--ink-mute);padding:40px 0;font-style:italic}
 </style>
 </head>
 <body>
@@ -472,6 +511,10 @@ body::before{
     </div>
   </div>
 
+  <button class="dl-btn" id="archiveBtn" title="Past worlds — browse & download">
+    <svg viewBox="0 0 24 24" width="15" height="15"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+    <span class="txt">Past worlds</span>
+  </button>
   <a class="dl-btn" id="dlWorld" href="/download/current" download title="Download the current world save">
     <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>
     <span class="txt">Download world</span>
@@ -1176,18 +1219,53 @@ function initUI(){
   $("#pauseBtn").onclick = togglePause;
   $("#liveBtn").onclick   = goLive;
   $("#drawerToggle").onclick = ()=> $("#inspector").classList.toggle("open");
+  $("#archiveBtn").onclick = openArchive;
+  $("#archiveClose").onclick = closeArchive;
+  $("#archiveModal").addEventListener("click",e=>{ if(e.target.id==="archiveModal") closeArchive(); });
 
   // global keyboard: space = pause/play, L = live
   window.addEventListener("keydown",e=>{
     if(e.target.matches("input,textarea"))return;
     if(e.code==="Space"){ togglePause(); e.preventDefault(); }
     else if(e.key==="l"||e.key==="L"){ goLive(); }
+    else if(e.key==="Escape"){ closeArchive(); }
   });
 
   // fade the hint after a moment
   setTimeout(()=>{ const h=$("#hint"); if(h) h.style.opacity="0"; }, 6000);
   $("#map").addEventListener("pointerdown",()=>{ const h=$("#hint"); if(h) h.style.opacity="0"; },{once:true});
 }
+
+
+/* ---- ARCHIVE MODAL ---- */
+function renderArchive(){
+  const grid=$("#archiveGrid"); const past=(state.live&&state.live.past)||[];
+  $("#archiveSub").textContent = past.length
+    ? `${past.length} ${past.length===1?"world has":"worlds have"} lived and ended`
+    : "no world has ended yet — this is the first age";
+  grid.innerHTML="";
+  if(!past.length){ grid.innerHTML='<div class="modal-empty">No worlds have ended yet.<br>When the last creature of this world dies, its story is archived here.</div>'; return; }
+  past.forEach(w=>{
+    const card=document.createElement("div"); card.className="awc";
+    const por=document.createElement("div"); por.className="por";
+    por.innerHTML='<div class="ph">◈</div>';
+    const im=new Image();
+    im.onload=()=>{ por.innerHTML=""; por.appendChild(im); };
+    im.onerror=()=>{}; im.alt="World "+w.no;
+    im.src="/archive/"+encodeURIComponent(w.base)+".png";
+    card.appendChild(por);
+    const body=document.createElement("div"); body.className="abody";
+    body.innerHTML=`<div class="an">World № ${fmt(w.no)}</div>`+
+      `<div class="ay num">ended in Year ${fmt(w.year)}</div>`+
+      `<div class="ae num">${fmt(w.events)} events recorded</div>`+
+      `<a class="adl" href="/archive/${encodeURIComponent(w.base)}.crn" download>`+
+      `<svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>save + history</a>`;
+    card.appendChild(body);
+    grid.appendChild(card);
+  });
+}
+function openArchive(){ renderArchive(); $("#archiveModal").classList.add("open"); $("#archiveModal").setAttribute("aria-hidden","false"); }
+function closeArchive(){ $("#archiveModal").classList.remove("open"); $("#archiveModal").setAttribute("aria-hidden","true"); }
 
 function boot(){
   resizeCanvas();
@@ -1212,5 +1290,19 @@ function boot(){
 if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",boot);
 else boot();
 </script>
+
+<!-- ARCHIVE MODAL — every world that has lived and died, available to download -->
+<div class="modal-backdrop" id="archiveModal" aria-hidden="true">
+  <div class="modal" role="dialog" aria-label="Past worlds">
+    <div class="modal-head">
+      <div>
+        <h2>Worlds that were</h2>
+        <div class="modal-sub" id="archiveSub">the chronicle of ages that have ended</div>
+      </div>
+      <button class="modal-close" id="archiveClose" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body" id="archiveGrid"></div>
+  </div>
+</div>
 </body>
 </html>
